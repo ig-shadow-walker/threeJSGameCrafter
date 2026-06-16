@@ -14,6 +14,7 @@ Created by [Majid Manzarpour](https://x.com/majidmanzarpour).
 | Championship Snooker Arena | [Watch on X](https://x.com/majidmanzarpour/status/2064673249129071096) | [snookerarena.netlify.app](https://snookerarena.netlify.app) |
 | Starship Dogfight | [Watch on X](https://x.com/majidmanzarpour/status/2065065340510281888) | [starshipdogfight.netlify.app](https://starshipdogfight.netlify.app) |
 | Tide Singer | [Watch on X](https://x.com/majidmanzarpour/status/2065570428723007555) | [tidesinger.netlify.app](https://tidesinger.netlify.app) |
+| Ripcore | [Watch on X](https://x.com/majidmanzarpour/status/2066687620709544070) | [ripcore.netlify.app](https://ripcore.netlify.app) |
 
 ## Install
 
@@ -26,7 +27,7 @@ npx skills add majidmanzarpour/threejs-game-skills --skill '*' -a codex -g -y
 Install all skills for Claude Code:
 
 ```bash
-npx skills add majidmanzarpour/threejs-game-skills --skill '*' -a claude -g -y
+npx skills add majidmanzarpour/threejs-game-skills --skill '*' -a claude-code -g -y
 ```
 
 If your installed `skills` CLI does not support the Claude Code target, install from a cloned checkout with `./install.sh --claude`.
