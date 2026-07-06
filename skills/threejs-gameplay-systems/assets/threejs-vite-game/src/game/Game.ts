@@ -9,6 +9,7 @@ import { CameraRig } from '../systems/CameraRig';
 import { CollisionSystem } from '../systems/CollisionSystem';
 import { DebugTools, type DebugTuning } from '../systems/DebugTools';
 import { Hud } from '../systems/Hud';
+import { disposeObject3D } from '../utils/dispose';
 
 const ARENA: ArenaBounds = {
   halfWidth: 11,
@@ -41,6 +42,7 @@ export class Game {
   };
 
   private readonly debugTools: DebugTools;
+  private floorTexture: THREE.CanvasTexture | null = null;
   private frame = 0;
   private score = 0;
   private elapsed = 0;
@@ -62,6 +64,8 @@ export class Game {
 
     this.createScene();
     this.hud.setTarget(this.pickups.length);
+    this.hud.onRestart(() => this.reset());
+    this.input.onRestartRequested(() => this.reset());
     this.cameraRig.snapTo(this.player.group.position);
     resizeRenderer(this.renderer, this.camera, this.tuning.maxDpr);
     this.publishDiagnostics();
@@ -71,6 +75,21 @@ export class Game {
     this.loop.start();
   }
 
+  reset(): void {
+    this.score = 0;
+    this.elapsed = 0;
+    this.complete = false;
+
+    for (const pickup of this.pickups) {
+      pickup.active = true;
+      pickup.group.visible = true;
+    }
+
+    this.cameraRig.snapTo(this.player.group.position);
+    this.hud.update(this.score, this.pickups.length, this.elapsed, this.complete);
+    this.publishDiagnostics();
+  }
+
   dispose(): void {
     this.loop.stop();
     this.input.dispose();
@@ -78,6 +97,8 @@ export class Game {
     this.debugTools.dispose();
     for (const pickup of this.pickups) pickup.dispose();
     this.player.dispose();
+    disposeObject3D(this.scene);
+    this.floorTexture?.dispose();
     this.renderer.dispose();
     window.__THREE_GAME_DIAGNOSTICS__ = undefined;
   }
@@ -140,6 +161,7 @@ export class Game {
   private createArena(): THREE.Group {
     const arena = new THREE.Group();
     const floorTexture = this.createFloorTexture();
+    this.floorTexture = floorTexture;
     floorTexture.wrapS = THREE.RepeatWrapping;
     floorTexture.wrapT = THREE.RepeatWrapping;
     floorTexture.repeat.set(ARENA.halfWidth / 2, ARENA.halfDepth / 2);

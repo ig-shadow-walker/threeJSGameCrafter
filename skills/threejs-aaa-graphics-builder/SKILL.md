@@ -45,7 +45,7 @@ External asset sourcing gate:
 5. Upgrade every weak visible surface, not only one hero object.
 6. Add lighting/render/material polish after authored forms exist.
 7. Add event-driven VFX tied to gameplay state.
-8. Re-score screenshots. Continue until every premium category is at least 2/3 or report exact blockers.
+8. Re-score screenshots. Continue until the full premium gate in `references/visual-scorecard.md` passes (every category at least 2 AND average at least 2.3) or report exact blockers.
 9. Verify renderer diagnostics, desktop/mobile screenshots, console/page errors, canvas pixels, imported asset budgets, and playability.
 
 ## Core Rule

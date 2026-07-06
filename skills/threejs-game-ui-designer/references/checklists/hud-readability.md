@@ -2,7 +2,7 @@
 
 - Player health/status is readable during normal movement and high-action moments.
 - Objective/progress information is visible without competing with threats or pickups.
-- Text contrast remains legible over bright, dark, and moving scene backgrounds.
+- Text contrast remains legible over bright, dark, and moving scene backgrounds; status text should meet WCAG contrast >= 4.5:1.
 - Critical status changes have at least two feedback channels when useful: shape, color, motion, sound, or text.
 - Meters, timers, and counters have fixed-width or stable containers.
 - HUD placement avoids the player focal area and likely spawn/threat lanes.

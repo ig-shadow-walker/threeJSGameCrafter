@@ -1,4 +1,4 @@
 interface:
   display_name: "Three.js Image Generator"
   short_description: "Generate concepts, textures, icons, decals, and UI art for Three.js games"
-  default_prompt: "Generate or edit a game-useful image asset for a Three.js project. Run the credential probe before declaring the key unavailable, save outputs inside the project assets directory, and report the prompt, resolution, output path, intended runtime use, and whether the image feeds threejs-3d-generator."
+  default_prompt: "Generate or edit a game-useful image asset for a Three.js project. Prefer the Alpha3D MCP generate_image tool if the connector is available; else use the ALPHA3D_API_KEY script (run the credential probe first); Gemini (--provider gemini) is an alternate. Save outputs inside the project assets directory, and report the path used, prompt, resolution/ratio, output path, intended runtime use, and whether the image feeds threejs-3d-generator."

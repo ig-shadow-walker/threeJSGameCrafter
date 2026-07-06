@@ -98,6 +98,8 @@ Check:
 
 Measure in production preview when user-facing performance matters.
 
+Scope here is diagnosis and optimization; the final ship-gate lives in `threejs-qa-release`.
+
 1. Establish scenario: viewport, DPR, route, gameplay state, camera view, mobile/desktop.
 2. Baseline:
    - FPS/frame time.

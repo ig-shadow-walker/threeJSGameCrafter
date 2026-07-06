@@ -1,207 +1,164 @@
 ---
 name: threejs-3d-generator
-description: "Generate, texture, rig, animate, stylize, convert, and download 3D assets for Three.js games using the Tripo API. Use for text-to-3D, image-to-3D, 2D concept to 3D conversion, game-ready GLB/FBX assets, characters, creatures, buildings, props, weapons, terrain pieces, auto-rigging, animation retargeting, model texturing, LEGO/voxel/Minecraft-style stylization, low-poly/quad conversion, and browser asset pipelines. Pair with threejs-image-generator for concepts, texture references, sky/background/terrain textures, logos, icons, and GUI art before image-to-3D generation."
+description: "Generate, texture, rig, retopologize, UV-unwrap, segment, convert, and download 3D assets for Three.js games. Use for text-to-3D, image-to-3D, multiview-to-3D, game-ready GLB/FBX/OBJ assets, characters, creatures, buildings, props, weapons, terrain pieces, auto-rigging, model texturing/restyling, low-poly/quad retopology, mesh segmentation, and browser asset pipelines. Default provider is Alpha3D, usable two ways: an MCP connector (no keys) or an ALPHA3D_API_KEY REST client; any other provider with the same submit-poll-download shape also works. Pair with threejs-image-generator for concepts, texture references, sky/background/terrain textures, logos, icons, and GUI art before image-to-3D generation."
 ---
 
 # Three.js 3D Generator
 
 ## Purpose
 
-Create production-oriented 3D assets, then prepare them for Three.js games. This is the Three.js game system's 3D-generation layer; it uses Tripo as the provider for text-to-3D, image-to-3D, texturing, rigging, retargeting, stylization, conversion, and downloadable GLB/FBX outputs.
+Create production-oriented 3D assets, then prepare them for Three.js games. This is the Three.js game system's 3D-generation layer. The default provider is **Alpha3D**, which offers text-to-3D, image-to-3D, multiview-to-3D, texturing, auto-rigging, retopology, UV unwrap, segmentation, format conversion, and downloadable GLB/OBJ/FBX/STL outputs. The skill is provider-agnostic: any service that follows the same submit → poll → download shape can be substituted.
 
-## API Key
+## Choosing An Integration Path
 
-Never store API keys in skill files or client-side game code. The script checks:
+There are two supported ways to reach Alpha3D. Decide before generating and record the choice in the report.
+
+**Path A — MCP connector (recommended, no API key in code).** If the Alpha3D MCP tools are available in this session (`generate_3d`, `get_job`, `rig_3d`, `texture_3d`, `retopologize`, `uv_unwrap`, `segment_3d`, `convert_format`, `remove_background`, `generate_image`, `list_generation_options`, `get_credit_balance`), call them directly. No script, no key handling — the connector authenticates over OAuth. Load `references/mcp-integration.md` for the tool map and the submit/poll pattern.
+
+**Path B — API key (`ALPHA3D_API_KEY`).** Use the bundled REST client (`scripts/threejs_3d_asset.py`) against the Alpha3D `/v1` API. Requires an `ak_live_…` key from the Alpha3D dashboard. Load `references/api-notes.md` for endpoints and the job model.
+
+**Any other provider.** If the user prefers a different 3D service, follow the same pattern: submit a job, poll status until terminal, download the model URL immediately (URLs expire). Document the substitution; the Three.js integration guidance still applies.
+
+Decision rule for an agent:
+
+1. If the Alpha3D MCP tools are present, use Path A.
+2. Else if `ALPHA3D_API_KEY` is set (see credential probe below), use Path B.
+3. Else report both setup options to the user, and fall back to procedural Three.js assets for now rather than blocking.
+
+## Path A: MCP Connector Setup
+
+If the tools are not yet present, the user adds Alpha3D as a custom MCP connector once:
+
+- Create/sign in to an Alpha3D account.
+- Claude Code / Claude: Settings → Connectors → Add custom connector → paste `https://api.alpha3d.io/mcp`, then complete the one-time sign-in.
+- Codex / ChatGPT: Settings → Connectors (enable Developer Mode to run generation tools), add the same URL, sign in.
+
+Auth is OAuth with PKCE (a scoped 30-day token tied to the account; no password is shared). Credits and the asset library stay in sync with the web app and REST API. Full usage in `references/mcp-integration.md`.
+
+## Path B: API Key Setup
+
+Never store API keys in skill files or client-side game code. The script reads the key from, in order:
 
 1. `--api-key`
-2. `TRIPO_API_KEY`
+2. `ALPHA3D_API_KEY`
 
-Step 0 before declaring the key unavailable:
+Create a key in the Alpha3D dashboard (API keys section). Keys are shown once (`ak_live_…`) and sent as `Authorization: Bearer <key>`.
 
-```bash
-bash ~/.claude/skills/threejs-game-director/scripts/probe_asset_credentials.sh
-```
-
-For Codex installs:
+Step 0 before declaring the key unavailable — run the director credential probe, which sources the user's shell profiles:
 
 ```bash
-bash ~/.codex/skills/threejs-game-director/scripts/probe_asset_credentials.sh
+bash ~/.claude/skills/threejs-game-director/scripts/probe_asset_credentials.sh   # Codex: ~/.codex/...
 ```
 
-Paste the literal `TRIPO_API_KEY=SET|MISSING` output in the report. Do not conclude the key is unavailable from a plain non-interactive shell until this probe has sourced the user's shell profiles.
+Paste the literal `ALPHA3D_API_KEY=SET|MISSING` line in the report. Do not conclude the key is unavailable from a plain non-interactive shell until this probe has run. If the probe says SET but the script reports a missing key, the key is only in an interactive profile — wrap the call the same way the probe does (`zsh -lc '...'` / `bash -lc '...'`).
 
-When the probe says SET but `threejs_3d_asset.py` reports a missing key, the key is exported in an interactive-only profile (e.g. `~/.zshrc`). Wrap script invocations the same way the probe does:
+Use the API only from local/server-side tooling. Model download URLs are presigned and expire within minutes, so download outputs immediately after a job succeeds.
 
-```bash
-zsh -c 'source "$HOME/.zprofile" 2>/dev/null; source "$HOME/.zshrc" 2>/dev/null; python3 .../threejs_3d_asset.py ...'
-```
+## Reference Gate
 
-Use the API only from local/server-side tooling. Generated model download URLs expire quickly, so download outputs immediately after successful tasks.
-
-## Tool Script
-
-Reference gate:
-
-- Load `references/api-notes.md` before provider API work, endpoint/task decisions, model-version choices, polling, postprocess, conversion, rigging, animation, or download handling.
-- Load `references/threejs-integration.md` before importing Tripo outputs into a browser game or advising GLB/FBX integration.
+- Load `references/api-notes.md` before Path B API work: endpoints, job types, status polling, quality tiers, credits, idempotency.
+- Load `references/mcp-integration.md` before Path A MCP work.
+- Load `references/threejs-integration.md` before importing outputs into a browser game or advising GLB/FBX integration.
 - Load `references/image-generator-workflows.md` before pairing `threejs-image-generator` with this skill for 2D concepts, texture references, UI art, logos, decals, or image-to-3D inputs.
 
-Track required references in a reference ledger with yes/no, path, and failure reason. Do not mark an asset pipeline complete while a required reference is skipped.
+Track required references in a reference ledger (yes/no, path, failure reason). Do not mark an asset pipeline complete while a required reference is skipped.
 
-Run from the user's current project directory:
+## Common Commands (Path B script)
 
 ```bash
 python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py --help
 ```
 
-If installed in Codex instead of Claude, use:
+Text to 3D (game-ready hero asset):
 
 ```bash
-python3 ~/.codex/skills/threejs-3d-generator/scripts/threejs_3d_asset.py --help
-```
-
-## Common Commands
-
-Recommended premium game hero model:
-
-```bash
-python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py text \
-  --prompt "game-ready [hero asset], strong readable silhouette, layered hard-surface detail, PBR materials, clean topology for browser game, centered pivot, 3/4 view, no text" \
-  --model-version v3.1-20260211 \
-  --texture-quality detailed \
-  --geometry-quality detailed \
-  --wait --download --out-dir assets/models/hero
-```
-
-Text to 3D:
-
-```bash
-python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py text \
-  --prompt "game-ready sci-fi hover bike, sleek armored panels, readable silhouette, PBR, front facing" \
-  --model-version v3.1-20260211 \
-  --texture-quality detailed \
-  --geometry-quality detailed \
+python3 .../threejs_3d_asset.py text \
+  --prompt "game-ready sci-fi hover bike, sleek armored panels, readable silhouette, PBR, front facing, centered pivot, no text" \
+  --quality pbr --output textured \
   --wait --download --out-dir assets/models/hover-bike
 ```
 
-Image to 3D from a local `threejs-image-generator` concept:
+Image to 3D from a local `threejs-image-generator` concept (auto-uploads the file):
 
 ```bash
-python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py image \
+python3 .../threejs_3d_asset.py image \
   --image assets/concepts/hover-bike-front.png \
-  --model-version v3.1-20260211 \
-  --enable-image-autofix \
-  --texture-alignment original_image \
-  --texture-quality detailed \
+  --quality pbr --output textured \
   --wait --download --out-dir assets/models/hover-bike
 ```
 
-Status and download:
+Multiview to 3D (front/back/left/right improve geometry):
 
 ```bash
-python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py status TASK_ID
-python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py download TASK_ID --out-dir assets/models
+python3 .../threejs_3d_asset.py multiview \
+  --front assets/concepts/robot-front.png --back assets/concepts/robot-back.png \
+  --left assets/concepts/robot-left.png \
+  --wait --download --out-dir assets/models/robot
 ```
 
-Texture, rig, animate, or convert:
+Status and download (URLs expire — re-fetch with `status` if a download link is stale):
 
 ```bash
-python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py postprocess \
-  --type texture_model --original-task-id TASK_ID \
-  --texture-prompt "brushed gunmetal, orange hazard decals, worn edges" \
+python3 .../threejs_3d_asset.py status JOB_ID
+python3 .../threejs_3d_asset.py download JOB_ID --out-dir assets/models --format glb
+```
+
+Edit jobs (all take `--job JOB_ID` from a succeeded generation, or `--model-url URL`):
+
+```bash
+# Retexture / restyle
+python3 .../threejs_3d_asset.py texture --job JOB_ID \
+  --prompt "brushed gunmetal, orange hazard decals, worn edges" \
   --wait --download --out-dir assets/models/retextured
 
-python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py postprocess \
-  --type animate_prerigcheck --original-task-id TASK_ID --wait
+# Auto-rig a T-pose humanoid mesh (armature + skin weights)
+python3 .../threejs_3d_asset.py rig --job JOB_ID --wait --download --out-dir assets/models/rigged
 
-python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py postprocess \
-  --type animate_rig --original-task-id TASK_ID --rig-type biped --spec tripo --wait
+# Retopology for a cleaner / lower mesh
+python3 .../threejs_3d_asset.py retopology --job JOB_ID --detail medium --polygon-type quadrilateral \
+  --wait --download --out-dir assets/models/retopo
 
-# animate_retarget takes the RIG task ID, not the generation task ID.
-# Batch up to 5 presets per task via --animations.
-# NEVER pass --animate-in-place: it corrupts the bake (mirrored limbs / exploded
-# skinning). Strip root motion in the engine instead.
-python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py postprocess \
-  --type animate_retarget --original-task-id RIG_TASK_ID --model-version v2.5-20260210 \
-  --animations preset:idle,preset:walk,preset:run \
-  --wait --download --out-dir assets/models/animated
-
-python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py postprocess \
-  --type conversion --original-task-id TASK_ID --format GLTF \
-  --face-limit 20000 --wait --download --out-dir assets/models/gltf
-
-python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py postprocess \
-  --type stylize_model --original-task-id TASK_ID --style voxel \
-  --wait --download --out-dir assets/models/voxel
+# UV unwrap, segment into parts, or convert format
+python3 .../threejs_3d_asset.py uv-unwrap --job JOB_ID --wait --download --out-dir assets/models/uv
+python3 .../threejs_3d_asset.py segment  --job JOB_ID --wait --download --out-dir assets/models/parts
+python3 .../threejs_3d_asset.py convert  --job JOB_ID --format FBX --wait --download --out-dir assets/models/fbx
 ```
 
-Animated character pipeline (generation -> prerigcheck -> validated rig with retries -> retargets -> downloads). The pipeline routes itself by body plan: biped characters automatically use the v1.0-20240301 anatomical rig with one FBX per animation (plain preset names are mapped onto the preset:biped:* library); creatures use the v2.5-20260210 rig with GLB clips:
+Account:
 
 ```bash
-python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py character-pipeline \
-  --prompt "stylized cyber runner character, T-pose, full body, game-ready outfit, readable silhouette" \
-  --animations preset:idle,preset:walk,preset:run,preset:jump \
-  --out-dir assets/models/cyber-runner
-
-# Creature example: stance language matters — generate in the pose the preset expects.
-python3 ~/.claude/skills/threejs-3d-generator/scripts/threejs_3d_asset.py character-pipeline \
-  --prompt "stylized wolf, quadrupedal stance, all four legs planted and separated, full body" \
-  --rig-type quadruped --animations preset:quadruped:walk \
-  --out-dir assets/models/wolf
+python3 .../threejs_3d_asset.py usage      # credit balance + recent usage
+python3 .../threejs_3d_asset.py list       # recent API jobs
 ```
 
-## Three.js Image Generator Pairing
+## Quality Tiers And Outputs
 
-Use `threejs-image-generator` before 3D generation when the asset benefits from a strong 2D reference:
+- `--quality`: `standard` (untextured-lit), `pbr` (full PBR materials, default), `low_poly` (game-ready). `--face-count` (3000–1500000) overrides the tier when you need a specific budget.
+- `--output`: `textured` (full PBR + paint, default) or `geometry` (shape-only, faster and cheaper).
+- Formats: generation always returns GLB (recommended for Three.js) + OBJ + thumbnail; `convert` targets GLB/OBJ/FBX/STL.
+- For mobile/browser budgets, prefer `low_poly` or a `retopology` pass, and keep `--output geometry` for background props that do not need textures.
 
-- Character concept, full-body T-pose/A-pose, front/side/back variants.
-- Building, prop, vehicle, weapon, pickup, enemy, obstacle, or terrain tile reference.
-- Style sheet for a whole asset family.
-- Texture references: terrain, rock, metal, fabric, decals, skyboxes, backgrounds, UI materials.
-- Logos, faction marks, pickup icons, hazard signs, cockpit decals, HUD symbols, and GUI panels.
+## Rigging Reliability
 
-Load `references/image-generator-workflows.md` for prompt patterns before generating or editing 2D inputs.
+Alpha3D auto-rigging produces an armature and skin weights on a humanoid mesh — it does not bake preset animation clips. Plan runtime animation in Three.js (`AnimationMixer` with your own or external clips) or via a DCC pipeline.
+
+- Rig from a full-body **T-pose or A-pose**: arms away from the body, legs separated, symmetric, no props fused into the silhouette, whole body (including head) in frame. A `threejs-image-generator` T-pose reference before image-to-3D helps a lot.
+- Verify the rendered preview is actually in T/A-pose before spending a rig job; regenerate the base mesh if the pose is wrong rather than rigging a bad pose.
+- After download, inspect the skeleton and `gltf.animations` in the engine; validate the rig visually before wiring gameplay. See `references/threejs-integration.md`.
 
 ## Three.js Integration
 
-Load `references/threejs-integration.md` before importing Tripo outputs into a browser game. In short:
+Load `references/threejs-integration.md` before importing outputs. In short:
 
-- Prefer GLB/PBR outputs for Three.js.
-- Use `GLTFLoader` for loading.
-- Use `AnimationMixer` for rigged/animated GLBs.
-- Keep generated model files out of client-side API flows; generation is a tooling step.
-- Inspect triangle count, texture count, material count, file size, scale, pivot, bounds, and animation clips.
+- Prefer GLB/PBR for Three.js; use `GLTFLoader` to load and `AnimationMixer` for animation.
+- Keep generated model files out of client-side API flows; generation is a build-time tooling step.
+- Inspect triangle count, texture/material count, file size, scale, pivot, bounds, and animation clips.
 - Use generated 3D assets as hero/high-fidelity content, then build surrounding prop kits procedurally or with additional `threejs-3d-generator` / `threejs-image-generator` passes.
 
-## Rigging and Animation Reliability
+## Image Generator Pairing
 
-Load `references/api-notes.md` for the full parameter tables. The rules that prevent most failures:
+Use `threejs-image-generator` before 3D generation when a strong 2D reference improves the result — character T-pose sheets, vehicle/building/prop concepts, style sheets, texture references, and logos/icons/decals. Load `references/image-generator-workflows.md` for prompt patterns and the handoff to `image` / `multiview`.
 
-- Generate characters as one fused mesh: keep `--quad` and `--generate-parts` off (`generate_parts` disables texturing; `quad` forces FBX output).
-- Require full-body T-pose or A-pose, arms away from body, symmetric, no props fused to the silhouette. Verify the rendered preview is actually in T/A-pose before rigging; regenerate if not.
-- Run `animate_prerigcheck` first (it takes no model version) and use the detected `rig_type` for `animate_rig` and preset selection. `riggable=false` means regenerate with a clearer pose, not force-rig.
-- `riggable=true` does not guarantee a usable rig. After rigging, validate the skeleton before retargeting: `threejs_3d_asset.py validate-rig rig-model.glb --rig-type biped` (the `character-pipeline` does this automatically). Check both presence AND chain depth: a rig with a 1-bone leg or 2-bone arm warps every clip.
-- Auto-rigging is nondeterministic. On validation failure, retry the rig task (~25 credits) before regenerating the model — `character-pipeline --rig-retries N` (default 2) automates this, and `--model-task-id TASK_ID` resumes from an existing generation. Armored/hard-surface characters need the most retries; organic meshes usually rig first try.
-- Creatures get exactly one preset (walk/march). For multi-mode creatures (crawl + fly dragons), rig the same model twice — ground rig type for the locomotion preset, `avian` for wing chains — and drive wings procedurally in Three.js or via external clips on a `mixamo`-spec rig.
-- Retargeted clips are named `NlaTrack`, `NlaTrack.001`, … in request order — map by index and rename after import.
-- Rig version is the main quality lever, and it differs by body plan (measured June 2026). The `character-pipeline` routes this automatically; only override `--rig-model-version` deliberately:
-  - HUMANOIDS: `v1.0-20240301` (anatomical Mixamo-like skeleton with twist bones + the large `preset:biped:*` clip library: idle, walk, run, slash, jump, dances, ...). The v2.x limb-chain rigger went 0/16 on humanoid meshes — armored or not, T-pose or A-pose — always producing asymmetric chains.
-  - CREATURES: `v2.5-20260210` (v2.x handles quadruped/avian well: symmetric 5-6 bone chains).
-- For v1.0 rigs, retarget with `--model-version default` (omit the version): the retarget enum rejects explicit `v1.0-20240301` (HTTP 400 code 2017) but the server default handles v1.0 rigs.
-- v1.0 retargets must use `--out-format fbx` (the script enforces this): Tripo's GLB bake on this path exports twist-bone transforms in the wrong space and limbs collapse into the torso — the FBX of the same task is correct. Load with three.js `FBXLoader` or convert offline. v2.5 creature retargets are fine as GLB.
-- Use `--spec tripo` (default) when Tripo presets will be retargeted; `--spec mixamo` rigs cannot be used with Tripo retarget and are only for external animation pipelines.
-- `animate_retarget` takes the RIG task ID. Batch up to 5 presets per task with `--animations`.
-- Only 16 presets exist for v2.5 rigs (no `preset:attack`; use `preset:slash`/`preset:shoot`). Non-biped rig types have a single locomotion preset each; plan extra creature motion procedurally or via external retargeting.
-- A creature's MESH STANCE drives how presets read: a quadruped walk on an upright-standing dragon looks like a human walking. Generate creatures in the stance the animation expects (horizontal body, all fours planted) — the pipeline only auto-appends T-pose language for biped rigs.
-- After download, run `threejs_3d_asset.py validate-animation clip.glb` (keyframe QA: flags scale tracks, limb-stretching translation tracks, extreme rotations, and reports per-clip duration/channel coverage), then verify motion visually in the engine.
-- Never use `--animate-in-place` (verified to corrupt clips: mirrored/crossed limbs on v1.0 rigs, exploded skinning on v2.5). Keep root motion baked and convert to in-place at import: zero only the HORIZONTAL components of the root bone's position track, keep vertical (jumps and gait bob live there). Gameplay code then drives locomotion. Exact snippet in `threejs-integration.md`.
-- After download, inspect `gltf.animations` clip names and counts before wiring the `AnimationMixer`.
+## Final Report
 
-## Quality Rules
-
-- Improve the user's prompt with material, silhouette, camera/readability, scale, and game-use constraints.
-- For riggable characters, include full-body T-pose or A-pose in the prompt or create a T-pose reference image first.
-- For Three.js games, request GLB/PBR, reasonable face limits, and texture quality matched to the performance budget.
-- For mobile/browser games, favor `smart_low_poly`, `face_limit`, later conversion, or low-poly postprocess when the asset is too expensive.
-- Always download output URLs immediately after success.
-- Report the credential probe output, reference ledger, task IDs, output paths, model version, texture/geometry settings, animations, conversion settings, Three.js import notes, and any missing/failed steps.
+Report the chosen integration path (MCP or API key), credential probe output (Path B), reference ledger, job IDs, output paths, quality/output settings, any rig/texture/convert edits, Three.js import notes, renderer diagnostics, and any missing/failed steps.

@@ -3,9 +3,19 @@ export class Hud {
   private readonly targetValue = this.getElement('#target-value');
   private readonly timerValue = this.getElement('#timer-value');
   private readonly statusLine = this.getElement('#status-line');
+  private readonly restartButton = this.getElement('#restart-button') as HTMLButtonElement;
+  private restartHandler: (() => void) | null = null;
+
+  constructor() {
+    this.restartButton.addEventListener('click', () => this.restartHandler?.());
+  }
 
   setTarget(target: number): void {
     this.targetValue.textContent = String(target);
+  }
+
+  onRestart(handler: () => void): void {
+    this.restartHandler = handler;
   }
 
   update(score: number, target: number, elapsed: number, complete: boolean): void {
@@ -14,7 +24,8 @@ export class Hud {
     const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
     const seconds = Math.floor(elapsed % 60).toString().padStart(2, '0');
     this.timerValue.textContent = `${minutes}:${seconds}`;
-    this.statusLine.textContent = complete ? 'Relay grid online' : 'Collect relays';
+    this.statusLine.textContent = complete ? 'Relay grid online — press R to replay' : 'Collect relays';
+    this.restartButton.hidden = !complete;
   }
 
   flashPickup(): void {

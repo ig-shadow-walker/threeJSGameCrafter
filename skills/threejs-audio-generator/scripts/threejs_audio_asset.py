@@ -8,6 +8,7 @@ import json
 import mimetypes
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -19,6 +20,11 @@ from typing import Any
 BASE_URL = "https://api.elevenlabs.io/v1"
 DEFAULT_OUTPUT_FORMAT = "mp3_44100_128"
 DEFAULT_TTS_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"
+
+MAX_RETRIES = 3
+RETRY_STATUS = {429, 500, 502, 503, 504}
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+ALLOWED_AUDIO_EXTS = {".mp3", ".wav", ".ogg", ".flac", ".m4a"}
 
 
 class AudioGeneratorError(RuntimeError):
@@ -53,18 +59,26 @@ def request_bytes(
     query: dict[str, Any] | None = None,
     timeout: int = 300,
 ) -> bytes:
-    req = urllib.request.Request(build_url(path, query), data=body, method=method)
-    req.add_header("xi-api-key", key)
-    for name, value in (headers or {}).items():
-        req.add_header(name, value)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read()
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise AudioGeneratorError(f"HTTP {exc.code}: {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise AudioGeneratorError(f"Network error: {exc.reason}") from exc
+    last_error: AudioGeneratorError | None = None
+    for attempt in range(MAX_RETRIES):
+        req = urllib.request.Request(build_url(path, query), data=body, method=method)
+        req.add_header("xi-api-key", key)
+        for name, value in (headers or {}).items():
+            req.add_header(name, value)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            last_error = AudioGeneratorError(f"HTTP {exc.code}: {detail}")
+            if exc.code not in RETRY_STATUS:
+                raise last_error from exc
+        except urllib.error.URLError as exc:
+            last_error = AudioGeneratorError(f"Network error: {exc.reason}")
+        if attempt < MAX_RETRIES - 1:
+            time.sleep(2 ** attempt)
+    assert last_error is not None
+    raise last_error
 
 
 def post_json_audio(args: argparse.Namespace, path: str, payload: dict[str, Any], out: Path) -> None:
@@ -97,6 +111,17 @@ def multipart_body(fields: dict[str, Any], files: dict[str, Path]) -> tuple[byte
     for name, path in files.items():
         if not path.exists():
             raise AudioGeneratorError(f"Input file not found: {path}")
+        ext = path.suffix.lower()
+        if ext not in ALLOWED_AUDIO_EXTS:
+            allowed = ", ".join(sorted(ALLOWED_AUDIO_EXTS))
+            raise AudioGeneratorError(
+                f"Unsupported input audio type '{ext or path.name}'. Allowed: {allowed}"
+            )
+        size = path.stat().st_size
+        if size > MAX_UPLOAD_BYTES:
+            raise AudioGeneratorError(
+                f"Input file too large: {size} bytes (max {MAX_UPLOAD_BYTES})."
+            )
         mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         chunks.append(f"--{boundary}\r\n".encode())
         chunks.append(
@@ -131,9 +156,35 @@ def post_multipart_audio(
 
 
 def write_file(path: Path, data: bytes) -> None:
+    resolved = path.resolve()
+    cwd = Path.cwd().resolve()
+    if not resolved.is_relative_to(cwd):
+        eprint(
+            f"Warning: output path escapes the current working directory: {resolved}"
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
-    print(f"Audio saved: {path.resolve()}")
+    tmp = path.with_name(path.name + ".part")
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    print(f"Audio saved: {resolved}")
+
+
+def parse_json_response(data: bytes) -> Any:
+    text = data.decode("utf-8", errors="replace")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        snippet = text[:200]
+        raise AudioGeneratorError(
+            f"Expected JSON response but got non-JSON body: {snippet!r}"
+        ) from exc
 
 
 def voice_settings(args: argparse.Namespace) -> dict[str, Any] | None:
@@ -152,7 +203,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
     print(f"ELEVENLABS_API_KEY={marker}")
     if args.validate and marker == "SET":
         data = request_bytes("GET", "/user", api_key(args))
-        user = json.loads(data.decode("utf-8"))
+        user = parse_json_response(data)
         print(f"VALID_USER={user.get('email') or user.get('user_id') or 'ok'}")
     return 0
 
@@ -296,7 +347,11 @@ def main() -> int:
     try:
         return args.func(args)
     except AudioGeneratorError as exc:
-        eprint(f"threejs_audio_asset.py: {exc}")
+        message = str(exc)
+        key = getattr(args, "api_key", None) or os.environ.get("ELEVENLABS_API_KEY")
+        if key:
+            message = message.replace(key, "***")
+        eprint(f"threejs_audio_asset.py: {message}")
         return 1
 
 

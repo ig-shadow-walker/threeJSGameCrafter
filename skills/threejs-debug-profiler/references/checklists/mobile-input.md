@@ -4,7 +4,7 @@
 - Set canvas and touch overlays to `touch-action: none` only where needed.
 - Use Pointer Events when possible.
 - Keep controls reachable with thumbs and away from safe-area edges.
-- Avoid tiny text or buttons below practical touch size.
+- Avoid tiny text or buttons below practical touch size; keep touch targets at roughly 44 CSS px minimum.
 - Verify portrait and landscape if both are supported.
 - Check high-DPR canvas scaling and cap DPR if performance suffers.
 - Prevent page scroll/zoom gestures from stealing gameplay input.

@@ -45,6 +45,8 @@ python3 <this-skill-dir>/scripts/create_threejs_game.py ./my-game
 
 The script copies `assets/threejs-vite-game/`, rewrites the project name in `package.json` and `package-lock.json`, and keeps generated games self-contained with their own visual test and canvas-inspection script. Use `--force` only when the target directory may be overwritten.
 
+The scaffold's `src/core/Loop.ts` is intentionally a variable-step arcade loop (it clamps delta only). This is fine for the kinematic pickup demo. Any physics gameplay must not simulate on the raw variable delta: add the fixed-timestep accumulator from `references/physics-engine-selection.md` and step the physics world at a fixed dt, then sync meshes. Do not rearchitect the shared render loop for this.
+
 ## Library Guidance
 
 - Use TypeScript, Vite, Three.js modules.

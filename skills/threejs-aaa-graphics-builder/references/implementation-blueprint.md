@@ -141,9 +141,9 @@ Own renderer setup in one place:
 
 - `outputColorSpace = THREE.SRGBColorSpace`.
 - Tone mapping and exposure selected for the art direction.
-- DPR capped for mobile and high-density displays.
+- DPR capped for mobile and high-density displays; use the canonical value in `render-recipes.md` (Renderer Setup).
 - Shadows enabled only for objects that benefit from grounding.
-- Post-processing is limited and measured: bloom, vignette, chromatic aberration, film grain, or color grade only when they improve authored forms.
+- Post-processing is limited and measured: bloom, vignette, chromatic aberration, film grain, or color grade only when they improve authored forms. When using EffectComposer, end the chain with `OutputPass` so tone mapping and sRGB apply once; see `render-recipes.md` (Post-Processing).
 - Resize updates canvas, renderer, camera, composer, and UI CSS variables.
 
 ## VFX System
@@ -174,8 +174,8 @@ Budgets vary by game and device, but start with explicit targets:
 
 - Keep draw calls low through instancing and shared materials.
 - Prefer many small details through instanced meshes over many unique mesh/material pairs.
-- Cap DPR before removing all visual detail.
-- Use LOD or distance culling for background props.
+- Cap DPR before removing all visual detail; use the canonical value in `render-recipes.md` (Renderer Setup).
+- Use LOD or distance culling for background props. LOD pays off only when camera-to-object distance varies widely; for fixed-distance arcade cameras, author a single tuned mesh instead.
 - Measure after every major graphics pass.
 
 ## Implementation Order

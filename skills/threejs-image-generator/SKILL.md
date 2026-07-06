@@ -1,6 +1,6 @@
 ---
 name: threejs-image-generator
-description: "Generate and edit 2D image assets for Three.js games using Google's Gemini image API. Use for concept sheets, image-to-3D inputs, texture references, sky/background plates, decals, logos, icons, GUI art, title/menu art, thumbnails, marketing stills, and source images that feed threejs-3d-generator. Also use for direct image editing when the user provides an image path."
+description: "Generate and edit 2D image assets for Three.js games. Use for concept sheets, image-to-3D inputs, texture references, sky/background plates, decals, logos, icons, GUI art, title/menu art, thumbnails, marketing stills, and source images that feed threejs-3d-generator. Default provider is Alpha3D (FLUX), usable via an MCP connector (no keys) or an ALPHA3D_API_KEY REST client; Gemini or another provider can be substituted. Also use for direct image editing when the user provides an image path."
 ---
 
 # Three.js Image Generator
@@ -9,7 +9,17 @@ description: "Generate and edit 2D image assets for Three.js games using Google'
 
 Create game-useful 2D assets and references for Three.js projects. This skill is the image-generation layer for the Three.js game system: it produces concepts, textures, decals, UI art, and 2D inputs that can be handed to `threejs-3d-generator` for image-to-3D model creation.
 
-Provider: Google's Gemini image API.
+Default provider: **Alpha3D (FLUX)**, image generation is free (rate-limited). The same two integration paths as the 3D generator apply.
+
+## Choosing An Integration Path
+
+**Path A — MCP connector (recommended, no key).** If the Alpha3D MCP tools are available (`generate_image`, `remove_background`), call them directly. `generate_image` supports text, image (transform), and style modes; returns the image inline. See the 3D generator's `references/mcp-integration.md` for connector setup — it is the same connector.
+
+**Path B — API key (`ALPHA3D_API_KEY`).** Use the bundled script against `/v1/images/*` (generate/transform). Free but rate-limited.
+
+**Alternate provider — Gemini.** Pass `--provider gemini` (`GEMINI_API_KEY`) to use Google's Gemini image API instead, or adapt for another provider.
+
+Decision rule: prefer the MCP tool if present; else the Alpha3D API key; else Gemini/other if that key is set; else report the options and fall back to procedural art.
 
 ## When To Use
 
@@ -23,60 +33,42 @@ Use this skill before procedural-only fallback when a Three.js game needs:
 
 For premium/AAA/showcase graphics work, generate at least one relevant image for high-value 2D surfaces or image-to-3D inputs unless the credential probe or a real generation attempt shows a blocker.
 
-## API Key
+## API Key (Path B / Gemini)
 
-Never store API keys in skill files or browser/game code. The script checks:
+Never store API keys in skill files or browser/game code. The script reads, in order: `--api-key`, then the provider env var (`ALPHA3D_API_KEY` for Alpha3D, `GEMINI_API_KEY` for Gemini).
 
-1. `--api-key`
-2. `GEMINI_API_KEY`
-
-Before declaring the key unavailable in a `threejs-game-director` or `threejs-aaa-graphics-builder` workflow, run the director credential probe and paste its literal SET/MISSING output:
+Before declaring a key unavailable in a `threejs-game-director` or `threejs-aaa-graphics-builder` workflow, run the director credential probe and paste its literal SET/MISSING output:
 
 ```bash
-bash ~/.codex/skills/threejs-game-director/scripts/probe_asset_credentials.sh
+bash ~/.claude/skills/threejs-game-director/scripts/probe_asset_credentials.sh   # Codex: ~/.codex/...
 ```
 
-For Claude installs:
+If the probe says `ALPHA3D_API_KEY=SET` but the script sees no key, run through a login shell that sources the user's profile (`zsh -lc '...'` / `bash -lc '...'`), the same way the probe does.
+
+## Tool Script (Path B)
+
+Run from the project directory so output lands in the game project:
 
 ```bash
-bash ~/.claude/skills/threejs-game-director/scripts/probe_asset_credentials.sh
+# Alpha3D (default)
+uv run ~/.claude/skills/threejs-image-generator/scripts/generate_image.py \
+  --prompt "your image description" --filename assets/concepts/output.png --ratio square
+
+# Image-to-3D framing helps the 3D pipeline
+uv run .../generate_image.py --prompt "single sci-fi hover bike, plain background" \
+  --filename assets/concepts/bike.png --static-enhancement
+
+# Edit / restyle an existing image
+uv run .../generate_image.py --input-image assets/concepts/ship.png \
+  --prompt "battle-worn red racing livery, clearer material zones" \
+  --filename assets/concepts/ship-red.png
+
+# Gemini alternate
+uv run .../generate_image.py --provider gemini --prompt "..." \
+  --filename assets/concepts/out.png --resolution 2K
 ```
 
-If the probe says `GEMINI_API_KEY=SET` but the script sees no key, run through a shell that sources the user's profile:
-
-```bash
-zsh -c 'source "$HOME/.zprofile" 2>/dev/null; source "$HOME/.zshrc" 2>/dev/null; uv run ~/.codex/skills/threejs-image-generator/scripts/generate_image.py --prompt "..." --filename assets/concepts/example.png'
-```
-
-## Tool Script
-
-Run from the user's current project directory so output lands in the game project:
-
-```bash
-uv run ~/.codex/skills/threejs-image-generator/scripts/generate_image.py --prompt "your image description" --filename assets/concepts/output.png --resolution 2K
-```
-
-Claude install path:
-
-```bash
-uv run ~/.claude/skills/threejs-image-generator/scripts/generate_image.py --prompt "your image description" --filename assets/concepts/output.png --resolution 2K
-```
-
-Edit an existing image:
-
-```bash
-uv run ~/.codex/skills/threejs-image-generator/scripts/generate_image.py \
-  --input-image assets/concepts/ship.png \
-  --prompt "turn this into a battle-worn red racing livery with clearer material zones" \
-  --filename assets/concepts/ship-red-livery.png \
-  --resolution 2K
-```
-
-Resolution mapping:
-
-- `1K`: quick concepts, icons, draft sheets.
-- `2K`: default production reference for image-to-3D, textures, backgrounds, UI panels.
-- `4K`: hero splash/title art, high-detail texture references, large sky/background plates.
+Resolution: Alpha3D supports `1K` and `1080p` (the script maps `--resolution 2K/4K` to `1080p`); Gemini uses `1K`/`2K`/`4K` as given. Use `--ratio square|portrait|landscape` for Alpha3D framing.
 
 ## Prompt Patterns
 
@@ -114,19 +106,18 @@ Create a wide game background plate of [environment]. Layered depth, readable ho
 
 - Save concepts and image-to-3D sources under `assets/concepts/`.
 - Save textures, decals, icons, and GUI source images under `assets/textures/`, `assets/decals/`, or `assets/ui/`.
-- For image-to-3D, hand the saved image path to `threejs-3d-generator` and record the chain in the external asset ledger.
+- For image-to-3D, hand the saved image path to `threejs-3d-generator` (`image` / `multiview` commands, or the MCP `generate_3d` tool) and record the chain in the external asset ledger.
 - Do not call the image API from client-side game code.
-- Convert generated PNGs into runtime formats deliberately: PNG for alpha/UI, JPG/WebP/KTX2 for larger opaque textures where the project pipeline supports it.
+- Convert generated images into runtime formats deliberately: PNG for alpha/UI, JPG/WebP/KTX2 for larger opaque textures where the project pipeline supports it.
 - Verify how the image appears in game, not only that the file exists.
 
 ## Required Report
 
 Report:
 
-- Credential probe output or command blocker.
+- Integration path (MCP / Alpha3D API key / Gemini) and credential probe output or blocker.
 - Prompt and purpose.
-- Output path.
-- Resolution.
+- Output path and resolution/ratio.
 - Whether the image was used directly, edited further, or handed to `threejs-3d-generator`.
 - Any remaining integration work such as compression, UV assignment, alpha cleanup, or atlas packing.
 

@@ -95,6 +95,8 @@ Any of these prevents a premium/AAA/showcase claim:
 
 ## Report Format
 
+Evidence must cite a concrete artifact: a screenshot file path, a pasted `renderer.info` object, or a variant count. An adjective ("looks polished", "cohesive") is not evidence. A category scored 2 or higher without a citable artifact defaults to the lower score.
+
 ```text
 Visual scorecard:
 - Art direction: before X / after Y - evidence:

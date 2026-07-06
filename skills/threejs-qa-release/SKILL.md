@@ -1,6 +1,6 @@
 ---
 name: threejs-qa-release
-description: "Verify and release Three.js browser games. Combines playtest QA, mobile/responsive checks, production builds, preview verification, static-hosting base paths, debug gating, bundle review, screenshots, packaged canvas-pixel inspection, console checks, and release risk reports."
+description: "Verify a built Three.js browser game works and gate release. Combines playtest QA, mobile/responsive checks, production builds, preview verification, static-hosting base paths, debug gating, bundle review, screenshots, packaged canvas-pixel inspection, console checks, and release risk reports."
 ---
 
 # Three.js QA Release
@@ -36,6 +36,8 @@ node <this-skill-dir>/scripts/inspect-threejs-canvas.mjs --url http://127.0.0.1:
 ```
 
 For mobile emulation, add `--mobile`. Generated games from the packaged scaffold also include their own `scripts/inspect-threejs-canvas.mjs` and `npm run inspect:canvas`.
+
+This skill has no `package.json`, so to run the inspector against a standalone target first install its dependencies: `npm i -D @playwright/test pngjs && npx playwright install chromium`.
 
 ## Release Workflow
 

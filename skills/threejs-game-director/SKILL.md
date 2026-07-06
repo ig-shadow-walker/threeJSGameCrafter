@@ -51,7 +51,9 @@ For narrow director-invoked work, load the directly relevant sibling skill and `
 
 Do not decide "3D generator not needed", "image generator not needed", or "audio generator not needed" before loading the relevant skill files when the trigger categories above are present.
 
-Before claiming an API key is unavailable, run the credential probe and paste its literal output in the report:
+The 3D and image generators default to **Alpha3D**, reachable two ways: an **MCP connector** (OAuth, no key — usable if the Alpha3D MCP tools are present in the session) or an **API key** (`ALPHA3D_API_KEY`). If the MCP connector is available, external 3D/image generation is not blocked even when `ALPHA3D_API_KEY` is `MISSING` — record which path was used.
+
+Before claiming an API key is unavailable for the API-key path, run the credential probe and paste its literal output in the report:
 
 ```bash
 bash <director-skill-dir>/scripts/probe_asset_credentials.sh
@@ -60,12 +62,12 @@ bash <director-skill-dir>/scripts/probe_asset_credentials.sh
 Expected output shape:
 
 ```text
-TRIPO_API_KEY=SET|MISSING
+ALPHA3D_API_KEY=SET|MISSING
 GEMINI_API_KEY=SET|MISSING
 ELEVENLABS_API_KEY=SET|MISSING
 ```
 
-The probe sources the user's shell profiles and prints only SET/MISSING markers, never secret values. `key unavailable` is not a valid skip reason unless this probe output is shown.
+The probe checks the current environment plus the user's zsh and bash login profiles, and prints only SET/MISSING markers, never secret values. `key unavailable` is not a valid skip reason unless this probe output is shown AND the Alpha3D MCP connector is also absent.
 
 For broad or premium game work, create an asset sourcing ledger before the graphics phase:
 
@@ -89,7 +91,7 @@ External asset sourcing:
 Allowed reasons to skip actual external generation after loading the skills:
 
 - The user explicitly requested no external AI/assets or offline-only output.
-- Credential probe output shows the relevant key is `MISSING`.
+- Credential probe output shows the relevant key is `MISSING` AND the Alpha3D MCP connector is not available (for 3D/image; the MCP path needs no key).
 - A real API/network/quota error occurs after an attempted generation command; include the command and error summary.
 - The surface is a repeated low-value prop better handled by instancing/procedural kits.
 - A non-hero repeated/support surface is already scoring 2+ in the visual scorecard and the asset sourcing ledger explains why external generation would not improve the active screenshot.

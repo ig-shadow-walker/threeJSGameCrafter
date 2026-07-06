@@ -1,6 +1,6 @@
 ---
 name: threejs-game-ui-designer
-description: "Design premium Three.js game UI. Use for HUDs, menus, overlays, pause/win/lose screens, settings, icon controls, touch UI, typography, responsive layout, safe areas, text fit, and UI/world cohesion."
+description: "Design/author premium Three.js game UI. Use for HUDs, menus, overlays, pause/win/lose screens, settings, icon controls, touch UI, typography, responsive layout, safe areas, text fit, and UI/world cohesion."
 ---
 
 # Three.js Game UI Designer
@@ -13,7 +13,7 @@ Make game UI intentional, readable, responsive, and genre-specific.
 
 Load `references/ui-patterns.md` as the first action when designing HUDs, menus, overlays, pause/win/lose screens, settings, touch controls, typography, responsive layout, safe areas, text fit, icons, or UI/world cohesion. Track it in a reference ledger with yes/no, path, and failure reason. Do not mark the UI phase complete while this reference is skipped for interface work.
 
-Load `references/checklists/game-ui-quality.md`, `references/checklists/hud-readability.md`, and `references/checklists/responsive-ui-fit.md` before claiming UI/HUD/menu work is complete. Load `references/checklists/mobile-input.md` when touch controls or mobile safe areas are in scope.
+Load `references/checklists/game-ui-quality.md`, `references/checklists/hud-readability.md`, and `references/checklists/responsive-ui-fit.md` before claiming UI/HUD/menu work is complete. For touch controls, mobile safe areas, and touch-target sizing, rely on the design-side coverage in `references/checklists/responsive-ui-fit.md` and `references/ui-patterns.md`.
 
 Load `references/prompt-templates.md` only when the user asks for reusable prompts, a UI pass prompt, or a task template.
 

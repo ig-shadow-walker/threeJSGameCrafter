@@ -131,6 +131,7 @@ python3 ~/.codex/skills/threejs-audio-generator/scripts/threejs_audio_asset.py v
 - Voice: TTS for clean generated lines; voice-change when timing/acting from a scratch performance matters.
 - Cleanup: isolate noisy speech before voice-change or final dialogue use.
 - Runtime: generate locally, commit/import files, and load them via Web Audio/Three.js integration. Never put API keys in browser code.
+- Output paths: `--out`/`--filename` are resolved relative to the current working directory. Keep outputs under `assets/` (e.g. `assets/audio/...`); paths that escape the project tree still write but emit a stderr warning.
 
 ## Required Report
 

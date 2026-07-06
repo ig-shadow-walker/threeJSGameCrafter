@@ -24,6 +24,23 @@ PHYSICS_MARKERS = [
     "physics engine",
     "timestep",
     "collider",
+    "sensor",
+    "ccd",
+]
+
+# Ten scorecard categories that must carry a numeric score (0-3) in the report,
+# not merely appear as headings. Matched as "<category> ... <digit>".
+SCORECARD_CATEGORIES = [
+    "art direction",
+    "hero/player",
+    "obstacles/enemies",
+    "rewards/interactables",
+    "world/environment",
+    "materials/textures",
+    "lighting/render",
+    "vfx/motion",
+    "ui/hud",
+    "performance evidence",
 ]
 
 PREMIUM_SCORECARD = [
@@ -44,8 +61,7 @@ PREMIUM_SCORECARD = [
 PREMIUM_ASSET_SOURCING = [
     "external asset sourcing",
     "credential probe output",
-    "tripo_api_key=",
-    "gemini_api_key=",
+    "alpha3d_api_key=",
     "3d generator",
     "image generator",
     "chosen sources",
@@ -54,16 +70,20 @@ PREMIUM_ASSET_SOURCING = [
     "materials/textures/decals",
 ]
 
+# "audio" alone is a substring of "audio generator" (free). Require the ledger line
+# plus real evidence (checked separately via has_audio_output_evidence / blocker).
 PREMIUM_AUDIO = [
-    "audio",
     "audio generator",
-    "elevenlabs_api_key=",
 ]
 
 EXTERNAL_OUTPUT_PATTERNS = [
-    re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"),
+    # A concrete downloaded asset path under the project.
     re.compile(r"\b[\w./-]*assets/(models|concepts|textures|ui|images|audio)/[\w./-]+\.(glb|gltf|fbx|png|jpg|jpeg|webp|mp3|wav|ogg|m4a)\b"),
-    re.compile(r"\b[\w./-]+\.(glb|gltf|fbx)\b"),
+    # An Alpha3D integer job id (as printed by the client / MCP: "job 123").
+    re.compile(r"\bjob[_ ]?id?\b[:=\s#]*\d+"),
+    re.compile(r"\bjob\s+\d+\b"),
+    # Other providers' UUID-style task ids.
+    re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"),
 ]
 
 AUDIO_OUTPUT_PATTERNS = [
@@ -103,14 +123,8 @@ def normalize(text: str) -> str:
     text = text.replace("threejs-3d-generator", "3d generator")
     text = text.replace("threejs-image-generator", "image generator")
     text = text.replace("threejs-audio-generator", "audio generator")
-    text = text.replace("tripo 3d assets", "3d generator")
-    text = text.replace("tripo 3d generation", "3d generator")
-    text = text.replace("tripo 3d", "3d generator")
-    text = text.replace("tripo loaded", "3d generator loaded")
-    text = text.replace("nano banana pro", "image generator")
-    text = text.replace("nano banana", "image generator")
-    text = text.replace("nanobanana", "image generator")
-    text = text.replace("nano-banana", "image generator")
+    text = text.replace("alpha3d 3d assets", "3d generator")
+    text = text.replace("alpha3d 3d generation", "3d generator")
     text = text.replace("phase-execution ledger", "phase ledger")
     text = text.replace("phase execution ledger", "phase ledger")
     text = text.replace("debug and profile", "debug/profile")
@@ -134,9 +148,33 @@ def has_audio_output_evidence(text: str) -> bool:
 
 
 def has_external_blocker(text: str) -> bool:
-    both_credentials_missing = "tripo_api_key=missing" in text and "gemini_api_key=missing" in text
+    both_credentials_missing = "alpha3d_api_key=missing" in text and "gemini_api_key=missing" in text
     non_credential_blocker = any(marker in text for marker in NON_CREDENTIAL_BLOCKER_MARKERS)
     return both_credentials_missing or non_credential_blocker
+
+
+def scorecard_problems(text: str) -> list[str]:
+    """Require numeric scores (values, not headings): >=8 of 10 categories scored,
+    an explicit average >= 2.3, and no category below 2."""
+    problems: list[str] = []
+    scores: list[int] = []
+    for category in SCORECARD_CATEGORIES:
+        # "<category> ... N" or "<category> ... N/3" with limited filler in between.
+        match = re.search(re.escape(category) + r"[^0-9\n]{0,16}([0-3])(?:\s*/\s*3)?", text)
+        if match:
+            scores.append(int(match.group(1)))
+    if len(scores) < 8:
+        problems.append("numeric scorecard scores for at least 8 of 10 categories "
+                        f"(found {len(scores)})")
+        return problems
+    if any(score < 2 for score in scores):
+        problems.append("a scorecard category scored below 2 (premium gate requires every category >= 2)")
+    avg_match = re.search(r"average[^0-9\n]{0,16}([0-9](?:\.[0-9]+)?)", text)
+    if not avg_match:
+        problems.append("an explicit numeric scorecard average")
+    elif float(avg_match.group(1)) < 2.3:
+        problems.append(f"scorecard average >= 2.3 (found {avg_match.group(1)})")
+    return problems
 
 
 def has_audio_blocker(text: str) -> bool:
@@ -175,12 +213,16 @@ def main() -> int:
 
     if args.premium:
         missing.extend(missing_markers(text, PREMIUM_SCORECARD))
+        # Values, not just headings: the scorecard must carry numeric scores,
+        # an average >= 2.3, and no category below 2.
+        missing.extend(scorecard_problems(text))
         missing.extend(missing_markers(text, PREMIUM_ASSET_SOURCING))
         missing.extend(missing_markers(text, VERIFICATION_MARKERS))
+        # A screenshot claim must cite an actual image path, not just the word.
+        if "screenshot" in text and not re.search(r"\.(png|jpg|jpeg|webp)\b", text):
+            missing.append("a screenshot file path (e.g. .png), not just the word 'screenshot'")
         if not has_external_output_evidence(text) and not has_external_blocker(text):
-            missing.append("real external asset evidence or blocker")
-        if "not-needed" in text and "procedural" in text and not has_external_output_evidence(text) and not has_external_blocker(text):
-            missing.append("procedural/not-needed requires external output evidence or blocker")
+            missing.append("real external asset evidence (asset path or job id) or a stated blocker")
 
     if args.physics:
         missing.extend(missing_markers(text, PHYSICS_MARKERS))

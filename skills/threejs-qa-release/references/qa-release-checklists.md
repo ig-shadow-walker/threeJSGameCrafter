@@ -62,7 +62,7 @@ For premium/AAA/showcase or "less basic" requests:
 - Touch controls emit game intents.
 - Pointer release/cancel/blur cannot leave controls stuck.
 - Safe areas respected.
-- Touch targets reachable and separated.
+- Touch targets reachable and separated, roughly 44 CSS px minimum.
 - Page scroll does not steal gameplay input.
 - Orientation/resize preserves canvas and HUD.
 - DPR/performance acceptable.
@@ -73,8 +73,10 @@ For premium/AAA/showcase or "less basic" requests:
 
 When draw calls, asset counts, shaders, shadows, or post-processing changed:
 
+Scope here is record & gate only; hand off to `threejs-debug-profiler` for root-cause diagnosis and optimization.
+
 - Record renderer calls, triangles, geometries, textures.
-- Record FPS/frame time if available.
+- Record FPS/frame time if available, over >= 3s after a 2s warmup; gate on >= 55 FPS desktop / >= 30 FPS mid-tier mobile.
 - Record physics engine, timestep, body count, collider count, active sensors, CCD bodies, and known expensive colliders when physics changed.
 - Note DPR cap and post/shadow settings.
 - Check active gameplay, not only idle view.

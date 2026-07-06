@@ -4,30 +4,30 @@ Self-contained Codex and Claude Code skills for building playable, polished Thre
 
 The package includes the runtime materials agents need: `SKILL.md` files, references, checklists, prompt templates, helper scripts, and a Vite + TypeScript + Three.js scaffold bundled inside the relevant skill folders.
 
-Created by [Majid Manzarpour](https://x.com/majidmanzarpour).
+3D and image asset generation are powered by [Alpha3D](https://alpha3d.io), usable either through an MCP connector (no API key) or an API key — see [Asset Generation](#asset-generation).
+
+Maintained by Aryan Behzadi — [Alpha3D](https://alpha3d.io) team ([GitHub](https://github.com/ig-shadow-walker)).
 
 ## Demos
 
+Demo games and videos are coming soon.
+
 | Game | Video | Play |
 | --- | --- | --- |
-| Neon Ridge Drift | [Watch on X](https://x.com/majidmanzarpour/status/2064565389036540327) | [ridgedrift.netlify.app](https://ridgedrift.netlify.app) |
-| Championship Snooker Arena | [Watch on X](https://x.com/majidmanzarpour/status/2064673249129071096) | [snookerarena.netlify.app](https://snookerarena.netlify.app) |
-| Starship Dogfight | [Watch on X](https://x.com/majidmanzarpour/status/2065065340510281888) | [starshipdogfight.netlify.app](https://starshipdogfight.netlify.app) |
-| Tide Singer | [Watch on X](https://x.com/majidmanzarpour/status/2065570428723007555) | [tidesinger.netlify.app](https://tidesinger.netlify.app) |
-| Ripcore | [Watch on X](https://x.com/majidmanzarpour/status/2066687620709544070) | [ripcore.netlify.app](https://ripcore.netlify.app) |
+| _Coming soon_ | — | — |
 
 ## Install
 
 Install all skills for Codex:
 
 ```bash
-npx skills add majidmanzarpour/threejs-game-skills --skill '*' -a codex -g -y
+npx skills add ig-shadow-walker/threejs-game-skills --skill '*' -a codex -g -y
 ```
 
 Install all skills for Claude Code:
 
 ```bash
-npx skills add majidmanzarpour/threejs-game-skills --skill '*' -a claude-code -g -y
+npx skills add ig-shadow-walker/threejs-game-skills --skill '*' -a claude-code -g -y
 ```
 
 If your installed `skills` CLI does not support the Claude Code target, install from a cloned checkout with `./install.sh --claude`.
@@ -68,42 +68,58 @@ The agent should:
 
 Users generally should not need to run the scaffold or QA helper scripts directly. Those scripts are packaged so the skills can use them as part of the workflow.
 
-## Optional API Keys
+## Asset Generation
 
-The core Three.js skills work without paid API keys. When keys are missing, the director should report the credential probe output, skip external generation, and fall back to procedural/local assets. Add keys only when you want the agent to generate external models, images, or audio.
+The core Three.js skills work without any paid asset generation. When generation is unavailable, the director reports the credential probe output, skips external generation, and falls back to procedural/local assets.
 
-Never commit API keys or put them in browser-side game code. These skills use provider APIs from local agent tooling, then save generated assets into your game project.
+3D and image generation default to **Alpha3D**, which you can reach two ways:
 
-| Provider | Skill | Environment variable | Use cases | Key setup |
-| --- | --- | --- | --- | --- |
-| Tripo API | `threejs-3d-generator` | `TRIPO_API_KEY` | Text/image/multiview to 3D, game-ready GLB/FBX hero models, vehicles, props, buildings, weapons, textures, rigging, animation, stylization, mesh conversion, post-processing. | [Tripo quick start](https://platform.tripo3d.ai/docs/quick-start) and [Tripo API overview](https://www.tripo3d.ai/api). |
-| Gemini image API | `threejs-image-generator` | `GEMINI_API_KEY` | Concept art, image-to-3D source images, texture references, decals, skies, backgrounds, icons, logos, GUI art, title/menu art. | [Gemini API key docs](https://ai.google.dev/gemini-api/docs/api-key) and [Google AI Studio keys](https://aistudio.google.com/app/apikey). |
-| ElevenLabs API | `threejs-audio-generator` | `ELEVENLABS_API_KEY` | SFX, ambience loops, UI sounds, announcer lines, dialogue TTS, voice conversion, audio cleanup, game audio manifests. | [ElevenLabs quickstart](https://elevenlabs.io/docs/eleven-api/quickstart) and [API authentication](https://elevenlabs.io/docs/api-reference/authentication). |
+### Option 1 — MCP connector (recommended, no API key)
+
+Add Alpha3D as a custom MCP connector once, and the agent calls its tools directly with no key stored anywhere:
+
+1. Create or sign in to an account at [alpha3d.io](https://alpha3d.io).
+2. Add the connector URL `https://api.alpha3d.io/mcp`:
+   - Claude Code / Claude: Settings → Connectors → Add custom connector → paste the URL → complete the one-time sign-in.
+   - Codex / ChatGPT: Settings → Connectors (enable Developer Mode to run generation tools) → add the URL → sign in.
+3. Sign in when the assistant opens the one-time link (OAuth; no password is shared).
+
+The connector exposes text/image/multiview → 3D, rigging, texturing, retopology, UV unwrap, segmentation, format conversion, background removal, FLUX image generation, job polling, and credit balance. Credits and your asset library stay in sync with the web app and the REST API.
+
+### Option 2 — API key
+
+Create an API key in the Alpha3D dashboard and export it. The bundled scripts use it from local/server-side tooling only.
+
+```bash
+export ALPHA3D_API_KEY="ak_live_..."   # 3D + image generation via the /v1 REST API
+```
+
+Never commit API keys or put them in browser-side game code. These skills use provider APIs from local agent tooling, then save generated assets into your game project. Generated download URLs are presigned and expire quickly, so the skills download outputs immediately after a job succeeds.
+
+### Providers and keys
+
+| Capability | Skill | How to enable | Use cases |
+| --- | --- | --- | --- |
+| 3D generation | `threejs-3d-generator` | Alpha3D MCP connector, **or** `ALPHA3D_API_KEY` | Text/image/multiview → 3D, game-ready GLB/FBX/OBJ hero models, vehicles, props, buildings, weapons, rigging, texturing, retopology, UV unwrap, segmentation, format conversion. |
+| Image generation | `threejs-image-generator` | Alpha3D MCP connector or `ALPHA3D_API_KEY` (alternate: `GEMINI_API_KEY`) | Concept art, image-to-3D source images, texture references, decals, skies, backgrounds, icons, logos, GUI art, title/menu art. |
+| Audio generation | `threejs-audio-generator` | `ELEVENLABS_API_KEY` | SFX, ambience loops, UI sounds, announcer lines, dialogue TTS, voice conversion, audio cleanup, game audio manifests. |
 
 Set keys in your shell profile, then restart your terminal.
 
 macOS/Linux with `zsh` or `bash`:
 
 ```bash
-export TRIPO_API_KEY="..."
-export GEMINI_API_KEY="..."
+export ALPHA3D_API_KEY="..."
+export GEMINI_API_KEY="..."       # optional image alternate
 export ELEVENLABS_API_KEY="..."
 ```
 
 For `zsh`, put those lines in `~/.zshrc` or `~/.zprofile`. For `bash`, put them in `~/.bashrc` or `~/.bash_profile`.
 
-Windows PowerShell, current terminal session only:
-
-```powershell
-$env:TRIPO_API_KEY = "..."
-$env:GEMINI_API_KEY = "..."
-$env:ELEVENLABS_API_KEY = "..."
-```
-
 Windows PowerShell, persistent for your user account:
 
 ```powershell
-[Environment]::SetEnvironmentVariable("TRIPO_API_KEY", "...", "User")
+[Environment]::SetEnvironmentVariable("ALPHA3D_API_KEY", "...", "User")
 [Environment]::SetEnvironmentVariable("GEMINI_API_KEY", "...", "User")
 [Environment]::SetEnvironmentVariable("ELEVENLABS_API_KEY", "...", "User")
 ```
@@ -116,13 +132,20 @@ The director skill includes a credential probe that sources common shell profile
 bash ~/.agents/skills/threejs-game-director/scripts/probe_asset_credentials.sh
 ```
 
-Provider notes:
+Expected output:
 
-- Tripo is optional but useful for high-value 3D surfaces that procedural code alone rarely makes premium: hero vehicles, bosses, weapons, buildings, creatures, props, and textured GLB/FBX assets.
-- Gemini image generation is optional but useful before Tripo image-to-3D and for high-quality texture, sky, icon, logo, decal, and GUI sources.
+```text
+ALPHA3D_API_KEY=SET|MISSING
+GEMINI_API_KEY=SET|MISSING
+ELEVENLABS_API_KEY=SET|MISSING
+```
+
+Notes:
+
+- The Alpha3D MCP connector authenticates over OAuth and needs no environment variable, so a `MISSING` `ALPHA3D_API_KEY` does not block the MCP path.
+- Alpha3D 3D generation is optional but useful for high-value surfaces procedural code alone rarely makes premium: hero vehicles, bosses, weapons, buildings, creatures, props, and textured GLB/FBX assets.
+- Alpha3D image generation (FLUX) is free (rate-limited) and useful before image-to-3D and for high-quality texture, sky, icon, logo, decal, and GUI sources; Gemini remains an alternate via `GEMINI_API_KEY`.
 - ElevenLabs is optional but useful for making games feel finished through interaction SFX, ambience, UI feedback, voice, and cleanup.
-- Google also supports `GOOGLE_API_KEY`, but these skills standardize on `GEMINI_API_KEY` for clarity.
-- Use provider-side key restrictions and quotas where available. ElevenLabs documents endpoint scopes, credit quotas, and secret-key handling; Google recommends environment variables and is migrating Gemini users toward auth keys.
 
 ## Best Entry Points
 
@@ -132,8 +155,8 @@ Provider notes:
 - Use `threejs-game-ui-designer` for HUDs, menus, overlays, responsive layout, safe areas, icons, touch controls, and text fit.
 - Use `threejs-debug-profiler` for black screens, runtime errors, loading issues, resize/mobile bugs, performance, draw calls, triangles, textures, and memory.
 - Use `threejs-qa-release` for production builds, browser verification, screenshots, canvas pixels, mobile checks, release risk reports, and static-hosting readiness.
-- Use `threejs-3d-generator` for Tripo API text/image-to-3D models, texture, rigging, animation, conversion, and GLB/FBX game assets.
-- Use `threejs-image-generator` for Gemini-generated concepts, image-to-3D inputs, textures, decals, skies, backgrounds, icons, logos, GUI art, and title/menu art.
+- Use `threejs-3d-generator` for Alpha3D text/image-to-3D models, texturing, rigging, retopology, UV unwrap, segmentation, conversion, and GLB/FBX game assets.
+- Use `threejs-image-generator` for Alpha3D (or Gemini) concepts, image-to-3D inputs, textures, decals, skies, backgrounds, icons, logos, GUI art, and title/menu art.
 - Use `threejs-audio-generator` for ElevenLabs SFX, ambience, UI sounds, voice/TTS, voice conversion, cleanup, and Three.js audio integration.
 
 For most user-facing game requests, start with `threejs-game-director` and let it pull in the specialists.
@@ -170,7 +193,7 @@ For asset-heavy games:
 ```text
 Use threejs-game-director to build a premium space dogfight game. Use threejs-image-generator
 for concepts, skies, decals, icons, and GUI art; use threejs-3d-generator for hero ships
-and weapons when credentials are available; use threejs-audio-generator for SFX and
+and weapons via the Alpha3D connector or API key; use threejs-audio-generator for SFX and
 ambience. If generation is blocked, report the credential probe output and fallback plan.
 ```
 
@@ -200,8 +223,8 @@ Premium/AAA claims should not rely on a static scene, placeholder cubes, generic
 - `threejs-game-ui-designer`: HUDs, menus, overlays, responsive UI, icons, safe areas, UI states.
 - `threejs-debug-profiler`: scene/runtime/render bugs, mobile bugs, performance profiling, renderer metrics.
 - `threejs-qa-release`: browser QA, screenshots, canvas pixels, responsive checks, production build, release risk report.
-- `threejs-3d-generator`: Tripo API text/image-to-3D, texture, auto-rig, animation, conversion, download, and Three.js import guidance.
-- `threejs-image-generator`: Gemini image generation for concepts, textures, decals, skies, icons, GUI art, and image-to-3D inputs.
+- `threejs-3d-generator`: Alpha3D text/image-to-3D, texturing, rigging, retopology, UV unwrap, segmentation, conversion, download, and Three.js import guidance (MCP connector or API key).
+- `threejs-image-generator`: Alpha3D (or Gemini) image generation for concepts, textures, decals, skies, icons, GUI art, and image-to-3D inputs.
 - `threejs-audio-generator`: ElevenLabs-backed SFX, ambience, UI sounds, voice/TTS, voice conversion, cleanup, and Three.js audio integration.
 
 ## Packaged Resources
@@ -230,6 +253,12 @@ Maintainers can run packaged helpers directly when testing the skill package, bu
 python3 skills/threejs-gameplay-systems/scripts/create_threejs_game.py ../my-threejs-game
 node skills/threejs-qa-release/scripts/inspect-threejs-canvas.mjs --url http://127.0.0.1:5188 --mobile
 ```
+
+## Acknowledgements
+
+This project is built on top of the original Three.js game skills created by [Majid Manzarpour](https://x.com/majidmanzarpour). His work laid the foundation for the skill system, the game scaffold, and the phase-based orchestration approach used here. Full credit and thanks to him for the original project.
+
+> Based on the Three.js game skills by Majid Manzarpour — https://x.com/majidmanzarpour
 
 ## License
 

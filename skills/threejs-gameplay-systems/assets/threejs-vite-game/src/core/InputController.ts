@@ -20,20 +20,17 @@ export class InputController {
     radius: 1,
   };
 
-  private dashDown = false;
+  private pointerDashActive = false;
+
+  private onRestart: (() => void) | null = null;
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
     this.keys.add(event.code);
-    if (event.code === 'Space' || event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
-      this.dashDown = true;
-    }
+    if (event.code === 'KeyR') this.onRestart?.();
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
     this.keys.delete(event.code);
-    if (event.code === 'Space' || event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
-      this.dashDown = false;
-    }
   };
 
   private readonly onStickDown = (event: PointerEvent) => {
@@ -69,12 +66,12 @@ export class InputController {
 
   private readonly onDashDown = (event: PointerEvent) => {
     event.preventDefault();
-    this.dashDown = true;
+    this.pointerDashActive = true;
   };
 
   private readonly onDashUp = (event: PointerEvent) => {
     event.preventDefault();
-    this.dashDown = false;
+    this.pointerDashActive = false;
   };
 
   constructor(
@@ -106,8 +103,17 @@ export class InputController {
     return target;
   }
 
+  onRestartRequested(handler: () => void): void {
+    this.onRestart = handler;
+  }
+
   isDashHeld(): boolean {
-    return this.dashDown;
+    return (
+      this.keys.has('Space') ||
+      this.keys.has('ShiftLeft') ||
+      this.keys.has('ShiftRight') ||
+      this.pointerDashActive
+    );
   }
 
   dispose(): void {

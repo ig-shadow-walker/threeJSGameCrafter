@@ -120,14 +120,14 @@ Reject if the world is mostly stretched boxes or a flat plane.
 - Custom `BufferGeometry`: tapered hulls, rocks, shards, wedges, low-poly terrain.
 - `ShapeGeometry`: decals, flat icons, trim strips, hazard markers.
 - `InstancedMesh`: windows, bolts, lane markers, debris, grass, lights, small props.
-- `LOD`: hero/background variants and dense prop reductions.
+- `LOD`: hero/background variants and dense prop reductions. LOD pays off only when camera-to-object distance varies widely; for fixed-distance arcade cameras, author a single tuned mesh instead.
 
 Use bevel-like layering when real bevel geometry is too expensive: duplicate thin trim meshes, edge strips, or slightly offset darker panels.
 
 ## Material And Detail Rules
 
 - Use roughness/metalness contrast, not only hue contrast.
-- Use emissive for authored signals, not entire objects.
+- Use emissive for authored signals, not entire objects. Emissive strips are authored signals on geometry, never a substitute for it. If removing bloom makes the object read as a primitive, the form is unfinished; see the Core Rule in `SKILL.md`.
 - Use glass/clearcoat sparingly on hero details.
 - Add darker contact material under important objects.
 - Use decals to imply scale and function.

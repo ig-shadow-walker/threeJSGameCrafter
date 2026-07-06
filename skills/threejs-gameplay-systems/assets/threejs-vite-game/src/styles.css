@@ -86,6 +86,23 @@ body {
   font-size: 0.78rem;
 }
 
+#restart-button {
+  padding: 9px 14px;
+  border: 1px solid rgba(246, 241, 223, 0.3);
+  color: #111312;
+  background: #f5ba49;
+  font-weight: 800;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+#restart-button[hidden] {
+  display: none;
+}
+
 #touch-controls {
   position: absolute;
   right: max(18px, env(safe-area-inset-right));

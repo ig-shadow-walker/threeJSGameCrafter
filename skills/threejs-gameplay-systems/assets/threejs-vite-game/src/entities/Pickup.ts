@@ -17,14 +17,15 @@ export class Pickup {
   private readonly ringMaterial = new THREE.MeshBasicMaterial({
     color: '#f6f1df',
   });
+  private readonly core: THREE.Mesh;
 
   constructor(
     readonly index: number,
     position: THREE.Vector3,
   ) {
-    const core = new THREE.Mesh(this.coreGeometry, this.coreMaterial);
-    core.castShadow = true;
-    this.group.add(core);
+    this.core = new THREE.Mesh(this.coreGeometry, this.coreMaterial);
+    this.core.castShadow = true;
+    this.group.add(this.core);
 
     const ring = new THREE.Mesh(this.ringGeometry, this.ringMaterial);
     ring.rotation.x = Math.PI / 2;
@@ -36,7 +37,7 @@ export class Pickup {
   update(delta: number, elapsed: number): void {
     if (!this.active) return;
     this.group.rotation.y += delta * 1.8;
-    this.group.children[0].rotation.x -= delta * 1.2;
+    this.core.rotation.x -= delta * 1.2;
     this.group.position.y = 0.78 + Math.sin(elapsed * 2.6 + this.index) * 0.16;
   }
 

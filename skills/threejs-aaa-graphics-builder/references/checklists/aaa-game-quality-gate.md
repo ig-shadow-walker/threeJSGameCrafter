@@ -1,5 +1,15 @@
 # AAA Browser Game Quality Gate
 
+## Every-Pass Baseline
+
+These apply to every graphics pass and are not repeated in the focused checklists:
+
+- Renderer diagnostics (`renderer.info`) or frame-time evidence is captured after any fidelity change.
+- Desktop and mobile active-play screenshots are checked after the change, not only idle/showroom views.
+- Repeated detail uses instancing, shared geometries/materials, atlases, or generated-resource reuse where practical.
+
+## Gate
+
 - The game is immediately playable and not presented as a landing page.
 - The core loop has objective, scoring/progress, fail/retry, pacing, and feedback.
 - Screenshots do not read as a collection of default primitives, debug HUDs, or generic placeholder panels.

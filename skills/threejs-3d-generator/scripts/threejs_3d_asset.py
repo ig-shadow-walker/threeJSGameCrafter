@@ -1,961 +1,593 @@
 #!/usr/bin/env python3
-"""Small Tripo OpenAPI client for skill-driven 3D asset generation."""
+"""Alpha3D /v1 client for generating Three.js game assets (Path B — API key).
+
+Submit → poll → download against the Alpha3D public API. For the MCP connector
+path (no API key), call the Alpha3D MCP tools directly instead; see
+references/mcp-integration.md. Any other provider with the same job shape can be
+adapted from this client.
+
+Auth:  Authorization: Bearer <ALPHA3D_API_KEY>   (key looks like ak_live_...)
+Base:  https://api.alpha3d.io   (override with ALPHA3D_API_BASE); routes under /v1
+
+Design notes (hardening):
+- Polling is driven off an explicit ONGOING set; unknown statuses keep polling
+  until timeout, never terminate early.
+- HTTP helpers retry with backoff on transient network / 429 / 5xx only.
+- Downloads are atomic (.part -> os.replace) so a crash never leaves a truncated
+  model file.
+- The API key is scrubbed from any error surfaced to stdout/stderr.
+- Output paths are resolved and a warning is printed if they escape the CWD tree.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
-import mimetypes
 import os
-from pathlib import Path
 import sys
 import time
-from typing import Any
-from urllib import error, parse, request
+import uuid
+from pathlib import Path
+from urllib import error, request
 
-BASE_URL = "https://api.tripo3d.ai/v2/openapi"
-FINAL_STATUSES = {"success", "failed", "banned", "expired", "cancelled", "unknown"}
-DOWNLOAD_KEYS = (
-    "pbr_model",
-    "model",
-    "base_model",
-    "rendered_image",
-    "generated_image",
-)
+DEFAULT_BASE = "https://api.alpha3d.io"
+API_PREFIX = "/v1"
 
-RIG_MODEL_VERSION = "v2.5-20260210"
-BIPED_PRESETS = (
-    "preset:idle",
-    "preset:walk",
-    "preset:run",
-    "preset:dive",
-    "preset:climb",
-    "preset:jump",
-    "preset:slash",
-    "preset:shoot",
-    "preset:hurt",
-    "preset:fall",
-    "preset:turn",
-)
-RIG_TYPE_PRESETS = {
-    "biped": set(BIPED_PRESETS),
-    "quadruped": {"preset:quadruped:walk"},
-    "hexapod": {"preset:hexapod:walk"},
-    "octopod": {"preset:octopod:walk"},
-    "serpentine": {"preset:serpentine:march"},
-    "aquatic": {"preset:aquatic:march"},
-    "avian": set(),
-}
-KNOWN_PRESETS = set().union(*RIG_TYPE_PRESETS.values())
-RETARGET_BATCH_LIMIT = 5
+ONGOING_STATUSES = {"queued", "processing", "pending", "running", "starting"}
+SUCCESS_STATUSES = {"succeeded", "success", "completed", "complete"}
+FAILURE_STATUSES = {"failed", "error", "banned", "cancelled", "canceled", "expired"}
+
+RETRYABLE_HTTP = {429, 500, 502, 503, 504}
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.5
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+MODEL_EXTS = {".glb", ".gltf", ".obj", ".fbx", ".usdz", ".stl"}
+MAX_UPLOAD_BYTES = 60 * 1024 * 1024  # 60MB ceiling for local uploads
+
+DEFAULT_TIMEOUT = 900
+DEFAULT_POLL_INTERVAL = 20
 
 
-def validate_animations(animations: list[str], rig_type: str | None = None, rig_model_version: str | None = None) -> None:
-    """Fail fast on presets the API will reject, before any credits are spent."""
-    # None = server default (used when retargeting v1.0 rigs); allow both namespaces then.
-    legacy = None if rig_model_version is None else rig_model_version.startswith("v1.0")
-    for animation in animations:
-        if not animation.startswith("preset:"):
-            continue
-        if animation.startswith("preset:biped:"):
-            # The large legacy clip library only works on v1.0-20240301 rigs.
-            if legacy is False:
-                raise TripoError(
-                    f"{animation} belongs to the v1.0-20240301 rig's preset library; retarget "
-                    "with --model-version default on a v1.0 rig to use it."
-                )
-            continue
-        if legacy:
-            raise TripoError(
-                f"{animation} is a v2.x preset; v1.0-20240301 rigs use the preset:biped:* "
-                "library instead (e.g. preset:biped:idle, preset:biped:walk, preset:biped:run)."
-            )
-        if animation not in KNOWN_PRESETS:
-            hint = ""
-            if "attack" in animation:
-                hint = " There is no preset:attack; use preset:slash or preset:shoot."
-            raise TripoError(
-                f"Unknown animation preset {animation!r}.{hint} "
-                f"Valid presets: {', '.join(sorted(KNOWN_PRESETS))}"
-            )
-        if rig_type and rig_type in RIG_TYPE_PRESETS and animation not in RIG_TYPE_PRESETS[rig_type]:
-            valid = ", ".join(sorted(RIG_TYPE_PRESETS[rig_type])) or "none documented for this rig type"
-            raise TripoError(
-                f"{animation} is not compatible with rig_type {rig_type!r}. Valid: {valid}"
-            )
+class Alpha3DError(Exception):
+    """Domain error raised for all client-side and API failures."""
 
 
-class TripoError(RuntimeError):
-    pass
+# --------------------------------------------------------------------------- #
+# HTTP layer
+# --------------------------------------------------------------------------- #
 
 
-def eprint(*parts: object) -> None:
-    print(*parts, file=sys.stderr)
+def _scrub(text: str, key: str | None) -> str:
+    if not text:
+        return text
+    if key:
+        text = text.replace(key, "***")
+    return text
 
 
-def api_key_from(args: argparse.Namespace) -> str:
-    key = args.api_key or os.environ.get("TRIPO_API_KEY")
-    if not key:
-        raise TripoError("Missing API key. Set TRIPO_API_KEY or pass --api-key.")
-    return key
+def _sleep_backoff(attempt: int) -> None:
+    time.sleep(RETRY_BASE_DELAY * (2 ** attempt))
 
 
-def json_request(api_key: str, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    url = f"{BASE_URL}{path}"
-    body = json.dumps(payload).encode("utf-8") if payload is not None else None
-    req = request.Request(url, data=body, method=method)
-    req.add_header("Authorization", f"Bearer {api_key}")
-    if payload is not None:
-        req.add_header("Content-Type", "application/json")
+def _parse_json(raw: bytes, context: str) -> dict:
     try:
-        with request.urlopen(req, timeout=60) as resp:
-            raw = resp.read().decode("utf-8")
-    except error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        raise TripoError(f"HTTP {exc.code} {exc.reason}: {raw}") from exc
-    except error.URLError as exc:
-        raise TripoError(f"Request failed: {exc.reason}") from exc
-    data = json.loads(raw)
-    if data.get("code") != 0:
-        raise TripoError(json.dumps(data, indent=2))
+        return json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        snippet = raw[:300].decode("utf-8", "replace")
+        raise Alpha3DError(f"{context}: non-JSON response ({exc}): {snippet}") from exc
+
+
+def _request(
+    method: str,
+    url: str,
+    key: str | None,
+    *,
+    body: dict | None = None,
+    raw_body: bytes | None = None,
+    content_type: str | None = None,
+    extra_headers: dict | None = None,
+    timeout: int = 120,
+    expect_json: bool = True,
+):
+    """Perform an HTTP request with bounded retry on transient failures."""
+    headers = {"Accept": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    if body is not None:
+        raw_body = json.dumps(body).encode("utf-8")
+        content_type = "application/json"
+    if content_type:
+        headers["Content-Type"] = content_type
+    if extra_headers:
+        headers.update(extra_headers)
+
+    last_exc: Exception | None = None
+    for attempt in range(MAX_RETRIES):
+        req = request.Request(url, data=raw_body, headers=headers, method=method)
+        try:
+            with request.urlopen(req, timeout=timeout) as resp:
+                payload = resp.read()
+            if expect_json:
+                return _parse_json(payload, f"{method} {url}")
+            return payload
+        except error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read()[:500].decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001 - best-effort detail
+                detail = ""
+            if exc.code in RETRYABLE_HTTP and attempt < MAX_RETRIES - 1:
+                last_exc = exc
+                _sleep_backoff(attempt)
+                continue
+            raise Alpha3DError(f"HTTP {exc.code} for {method} {url}: {detail}") from exc
+        except (error.URLError, TimeoutError) as exc:
+            if attempt < MAX_RETRIES - 1:
+                last_exc = exc
+                _sleep_backoff(attempt)
+                continue
+            raise Alpha3DError(f"Network error for {method} {url}: {exc}") from exc
+    raise Alpha3DError(f"Request failed for {method} {url}: {last_exc}")
+
+
+# --------------------------------------------------------------------------- #
+# API client
+# --------------------------------------------------------------------------- #
+
+
+class Client:
+    def __init__(self, key: str, base: str):
+        self.key = key
+        self.base = base.rstrip("/")
+
+    def _url(self, path: str) -> str:
+        return f"{self.base}{API_PREFIX}{path}"
+
+    def submit_job(self, body: dict) -> dict:
+        headers = {"Idempotency-Key": uuid.uuid4().hex}
+        data = _request("POST", self._url("/jobs"), self.key, body=body,
+                        extra_headers=headers)
+        return _job_view(data)
+
+    def get_job(self, job_id) -> dict:
+        data = _request("GET", self._url(f"/jobs/{job_id}"), self.key)
+        return _job_view(data)
+
+    def list_jobs(self, limit: int = 20) -> dict:
+        return _request("GET", self._url(f"/jobs?limit={limit}"), self.key)
+
+    def usage(self) -> dict:
+        return _request("GET", self._url("/usage"), self.key)
+
+    def presign(self, file_name: str, kind: str, content_type: str | None) -> dict:
+        body = {"file_name": file_name, "kind": kind}
+        if content_type:
+            body["content_type"] = content_type
+        return _request("POST", self._url("/uploads/presign"), self.key, body=body)
+
+    def upload_local(self, local_path: str, kind: str) -> str:
+        """Presign, PUT the bytes, and return the file_url to reference in a job."""
+        path = Path(local_path)
+        if not path.is_file():
+            raise Alpha3DError(f"File not found: {local_path}")
+        ext = path.suffix.lower()
+        allowed = IMAGE_EXTS if kind == "image" else MODEL_EXTS
+        if ext not in allowed:
+            raise Alpha3DError(
+                f"Unsupported {kind} extension {ext!r}; allowed: {sorted(allowed)}")
+        size = path.stat().st_size
+        if size > MAX_UPLOAD_BYTES:
+            raise Alpha3DError(
+                f"{local_path} is {size} bytes; exceeds {MAX_UPLOAD_BYTES}-byte upload ceiling")
+        ct = _content_type_for(ext)
+        signed = self.presign(path.name, kind, ct)
+        upload_url = signed.get("upload_url")
+        file_url = signed.get("file_url")
+        if not upload_url or not file_url:
+            raise Alpha3DError(f"Presign response missing upload_url/file_url: {signed}")
+        _request("PUT", upload_url, key=None, raw_body=path.read_bytes(),
+                 content_type=ct, expect_json=False, timeout=300)
+        return file_url
+
+    def resolve_source(self, local_or_url: str, kind: str) -> str:
+        """Return a usable URL: upload local files, pass through https URLs."""
+        if local_or_url.startswith("http://") or local_or_url.startswith("https://"):
+            return local_or_url
+        return self.upload_local(local_or_url, kind)
+
+    def wait(self, job_id, timeout: int, interval: int) -> dict:
+        deadline = time.monotonic() + timeout
+        job = self.get_job(job_id)
+        while True:
+            status = str(job.get("status", "")).lower()
+            if status in SUCCESS_STATUSES:
+                return job
+            if status in FAILURE_STATUSES:
+                raise Alpha3DError(
+                    f"Job {job_id} ended as {status!r}: {job.get('error') or 'no detail'}")
+            # ONGOING or unrecognized -> keep polling until timeout.
+            if time.monotonic() >= deadline:
+                raise Alpha3DError(
+                    f"Timed out waiting for job {job_id} after {timeout}s (last status "
+                    f"{status!r}). The job keeps running server-side; resume with: "
+                    f"status {job_id}  /  download {job_id}")
+            stage = job.get("stage")
+            print(f"  job {job_id}: {status}{f' ({stage})' if stage else ''}...",
+                  file=sys.stderr)
+            time.sleep(interval)
+            job = self.get_job(job_id)
+
+
+def _job_view(data: dict) -> dict:
+    """Accept either a bare job object or a {job: ...} / {data: {post: ...}} wrapper."""
+    if not isinstance(data, dict):
+        raise Alpha3DError(f"Unexpected job response: {data!r}")
+    for key in ("job", "post"):
+        if key in data and isinstance(data[key], dict):
+            return data[key]
+    if "data" in data and isinstance(data["data"], dict):
+        return _job_view(data["data"])
     return data
 
 
-def multipart_upload(api_key: str, file_path: Path) -> str:
-    if not file_path.exists():
-        raise TripoError(f"Image not found: {file_path}")
-    if file_path.stat().st_size > 20 * 1024 * 1024:
-        raise TripoError("Tripo upload limit is 20MB.")
-    mime = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
-    ext = file_path.suffix.lower().lstrip(".")
-    if ext == "jpg":
-        ext = "jpeg"
-    if ext not in {"png", "jpeg", "webp"}:
-        raise TripoError("Direct image upload accepts png, jpeg/jpg, or webp.")
+def _content_type_for(ext: str) -> str:
+    return {
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+        ".webp": "image/webp", ".glb": "model/gltf-binary", ".gltf": "model/gltf+json",
+        ".obj": "application/octet-stream", ".fbx": "application/octet-stream",
+        ".usdz": "model/vnd.usdz+zip", ".stl": "model/stl",
+    }.get(ext, "application/octet-stream")
 
-    boundary = f"tripo-boundary-{int(time.time() * 1000)}"
-    content = file_path.read_bytes()
-    parts = [
-        f"--{boundary}\r\n".encode(),
-        (
-            f'Content-Disposition: form-data; name="file"; filename="{file_path.name}"\r\n'
-            f"Content-Type: {mime}\r\n\r\n"
-        ).encode(),
-        content,
-        f"\r\n--{boundary}--\r\n".encode(),
-    ]
-    body = b"".join(parts)
-    req = request.Request(f"{BASE_URL}/upload/sts", data=body, method="POST")
-    req.add_header("Authorization", f"Bearer {api_key}")
-    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
-    req.add_header("Content-Length", str(len(body)))
+
+# --------------------------------------------------------------------------- #
+# Downloads
+# --------------------------------------------------------------------------- #
+
+
+def _safe_out_dir(out_dir: str) -> Path:
+    path = Path(out_dir).resolve()
+    cwd = Path.cwd().resolve()
     try:
-        with request.urlopen(req, timeout=120) as resp:
-            raw = resp.read().decode("utf-8")
-    except error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", errors="replace")
-        raise TripoError(f"Upload failed: HTTP {exc.code} {exc.reason}: {raw}") from exc
-    data = json.loads(raw)
-    if data.get("code") != 0:
-        raise TripoError(json.dumps(data, indent=2))
-    token = data.get("data", {}).get("image_token")
-    if not token:
-        raise TripoError(f"Upload response did not include image_token: {raw}")
-    return token
-
-
-def submit_task(api_key: str, payload: dict[str, Any]) -> str:
-    data = json_request(api_key, "POST", "/task", payload)
-    task_id = data.get("data", {}).get("task_id")
-    if not task_id:
-        raise TripoError(f"Task response did not include task_id: {data}")
-    print(task_id)
-    return task_id
-
-
-def get_task(api_key: str, task_id: str) -> dict[str, Any]:
-    return json_request(api_key, "GET", f"/task/{task_id}")["data"]
-
-
-def wait_for_task(api_key: str, task_id: str, interval: int, timeout: int) -> dict[str, Any]:
-    start = time.monotonic()
-    while True:
-        data = get_task(api_key, task_id)
-        status = data.get("status", "unknown")
-        progress = data.get("progress", 0)
-        eprint(f"{task_id}: {status} {progress}%")
-        if status in FINAL_STATUSES:
-            return data
-        if time.monotonic() - start > timeout:
-            raise TripoError(f"Timed out waiting for task {task_id}")
-        time.sleep(interval)
-
-
-def safe_name(value: str) -> str:
-    keep = []
-    for char in value.lower():
-        if char.isalnum():
-            keep.append(char)
-        elif char in {"-", "_", " "}:
-            keep.append("-")
-    name = "".join(keep).strip("-")
-    while "--" in name:
-        name = name.replace("--", "-")
-    return name or "asset"
-
-
-def extension_for(key: str, url: str, content_type: str | None = None) -> str:
-    path = parse.urlparse(url).path
-    ext = Path(path).suffix
-    if ext:
-        return ext
-    if content_type:
-        guessed = mimetypes.guess_extension(content_type.split(";")[0].strip())
-        if guessed:
-            return guessed
-    if "image" in key:
-        return ".png"
-    return ".glb"
-
-
-def download_url(url: str, out_dir: Path, filename_base: str, key: str) -> Path:
-    req = request.Request(url, method="GET")
-    with request.urlopen(req, timeout=300) as resp:
-        content = resp.read()
-        content_type = resp.headers.get("Content-Type")
-    ext = extension_for(key, url, content_type)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{filename_base}-{key}{ext}"
-    path.write_bytes(content)
+        path.relative_to(cwd)
+    except ValueError:
+        print(f"WARNING: output path {path} is outside the current project "
+              f"({cwd}); writing there anyway.", file=sys.stderr)
+    path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def download_outputs(task: dict[str, Any], out_dir: Path) -> list[Path]:
-    task_id = task["task_id"]
-    output = task.get("output") or {}
-    paths: list[Path] = []
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / f"{task_id}.json").write_text(json.dumps(task, indent=2), encoding="utf-8")
-    for key in DOWNLOAD_KEYS:
-        url = output.get(key)
-        if isinstance(url, str) and url.startswith("http"):
-            path = download_url(url, out_dir, task_id, key)
-            paths.append(path)
-            print(path)
-    multiview = output.get("generate_multiview_image")
-    if isinstance(multiview, dict):
-        for key, url in multiview.items():
-            if isinstance(url, str) and url.startswith("http"):
-                path = download_url(url, out_dir, task_id, key)
-                paths.append(path)
-                print(path)
-    if not paths:
-        eprint("No downloadable output URLs found.")
-    return paths
+def _download(url: str, dest: Path) -> None:
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    payload = _request("GET", url, key=None, expect_json=False, timeout=300)
+    tmp.write_bytes(payload)
+    os.replace(tmp, dest)
 
 
-def glb_node_names(path: Path) -> list[str]:
-    import struct
-    with path.open("rb") as handle:
-        header = handle.read(12)
-        if len(header) < 12 or header[:4] != b"glTF":
-            raise TripoError(f"Not a GLB file: {path}")
-        chunk_len, _chunk_type = struct.unpack("<II", handle.read(8))
-        gltf = json.loads(handle.read(chunk_len))
-    return [node.get("name", "") for node in gltf.get("nodes", []) if node.get("name")]
+def download_outputs(job: dict, out_dir: str, fmt: str | None) -> list[str]:
+    outputs = job.get("outputs") or {}
+    if not outputs:
+        raise Alpha3DError(f"Job {job.get('id')} has no outputs; status "
+                           f"{job.get('status')!r}")
+    target = _safe_out_dir(out_dir)
+    job_id = job.get("id", "asset")
+    written: list[str] = []
+
+    if fmt:
+        key = fmt.lower()
+        url = outputs.get(key)
+        if not url:
+            raise Alpha3DError(f"No {fmt!r} output on job {job_id}; available: "
+                               f"{sorted(outputs)}")
+        keys = [key]
+    else:
+        # Prefer a loadable mesh; always grab a thumbnail if present.
+        preferred = ["glb", "textured_mesh", "mesh", "obj", "fbx"]
+        keys = [k for k in preferred if k in outputs][:1]
+        keys += [k for k in outputs if k.startswith("part_")]
+        if "thumbnail" in outputs:
+            keys.append("thumbnail")
+        if not keys:
+            keys = list(outputs)
+
+    for key in keys:
+        url = outputs[key]
+        ext = _ext_for_output(key, url)
+        dest = target / f"{job_id}_{key}{ext}"
+        _download(url, dest)
+        written.append(str(dest))
+        print(f"  downloaded {key} -> {dest}")
+    return written
 
 
-def glb_bone_names(path: Path) -> list[str]:
-    return [name for name in glb_node_names(path) if name.startswith("tripo::")]
+def _ext_for_output(key: str, url: str) -> str:
+    if key == "thumbnail":
+        return ".png"
+    if key == "obj":
+        return ".obj"
+    if key == "fbx":
+        return ".fbx"
+    # part_* and mesh/glb default to .glb
+    base = url.split("?", 1)[0]
+    for known in (".glb", ".gltf", ".obj", ".fbx", ".stl", ".png", ".jpg"):
+        if base.lower().endswith(known):
+            return known
+    return ".glb"
 
 
-LEGACY_BIPED_PAIRED_BONES = ("Clavicle", "Upperarm", "Forearm", "Hand", "Thigh", "Calf", "Foot")
+# --------------------------------------------------------------------------- #
+# Command handlers
+# --------------------------------------------------------------------------- #
 
 
-def validate_rig_glb(path: Path, rig_type: str) -> tuple[str, list[str]]:
-    """Validate either rig naming scheme. v2.x rigs use tripo::<row>_<side>_Limb_<n>
-    chains; v1.0-20240301 rigs use an anatomical Mixamo-like skeleton (Hip, Spine01,
-    L_Upperarm, R_Calf, twist bones, ...)."""
-    names = glb_node_names(path)
-    bones = [n for n in names if n.startswith("tripo::")]
-    if bones:
-        return f"{len(bones)} tripo:: bones: {', '.join(sorted(bones))}", validate_rig_bones(bones, rig_type)
-    left = {n[2:] for n in names if n.startswith("L_")}
-    right = {n[2:] for n in names if n.startswith("R_")}
-    if not left and not right:
-        return "no recognizable rig bones", ["no tripo:: or legacy L_/R_ bones found in rig GLB"]
-    problems = []
-    for part in LEGACY_BIPED_PAIRED_BONES:
-        if part not in left or part not in right:
-            problems.append(f"legacy rig missing L_/R_ {part}")
-    if left != right:
-        problems.append(f"legacy rig asymmetric bones: {sorted(left.symmetric_difference(right))}")
-    if rig_type != "biped":
-        problems.append(f"legacy anatomical skeleton is biped-only; requested rig_type {rig_type!r}")
-    return f"legacy anatomical skeleton, {len(left)} paired L/R bones: {', '.join(sorted(left))}", problems
-
-
-def validate_rig_bones(bones: list[str], rig_type: str) -> list[str]:
-    """Return problems with a downloaded rig's skeleton. A passing prerigcheck does
-    not guarantee a usable rig: degenerate rigs (e.g. spine plus one arm) do occur,
-    and every later retarget inherits the damage."""
-    problems: list[str] = []
-    if not bones:
-        problems.append("no tripo:: bones found in rig GLB")
-        return problems
-    rows: dict[str, dict[str, int]] = {}
-    for bone in bones:
-        if "_Limb_" not in bone:
-            continue
-        row, side = bone.split("::")[-1].split("_")[0:2]
-        rows.setdefault(row, {}).setdefault(side, 0)
-        rows[row][side] += 1
-    for row, sides in sorted(rows.items()):
-        if set(sides) != {"Left", "Right"}:
-            problems.append(f"limb row {row} has only {'/'.join(sorted(sides))} (asymmetric rig)")
-            continue
-        left, right = sides["Left"], sides["Right"]
-        # A knee-less leg or elbow-less arm warps every retargeted clip. Healthy
-        # Tripo rigs are depth-symmetric (e.g. 5/5, 6/6, occasionally 6/5); broken
-        # ones are 2/4, 9/4, or 4/1. Tolerate a 1-bone difference.
-        if abs(left - right) > 1:
-            problems.append(f"limb row {row} chain depth mismatch: Left={left} vs Right={right}")
-        if rig_type in {"biped", "quadruped"} and min(left, right) < 3:
-            problems.append(f"limb row {row} chain too shallow ({min(left, right)} bones; need >=3 for joint articulation)")
-    if rig_type in {"biped", "quadruped"} and len(rows) < 2:
-        problems.append(f"only {len(rows)} limb row(s); {rig_type} needs arms and legs (2 rows)")
-    if rig_type == "biped" and not any(b.startswith("tripo::Head") for b in bones) and len(bones) < 12:
-        problems.append(f"suspiciously small skeleton ({len(bones)} bones)")
-    return problems
-
-
-def add_common_model_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--model-version", default="v3.1-20260211")
-    parser.add_argument("--negative-prompt")
-    parser.add_argument("--model-seed", type=int)
-    parser.add_argument("--image-seed", type=int)
-    parser.add_argument("--texture-seed", type=int)
-    parser.add_argument("--texture-quality", choices=["standard", "detailed", "extreme"])
-    parser.add_argument("--geometry-quality", choices=["standard", "detailed"])
-    parser.add_argument("--face-limit", type=int)
-    parser.add_argument("--no-texture", action="store_true")
-    parser.add_argument("--no-pbr", action="store_true")
-    parser.add_argument("--smart-low-poly", action="store_true")
-    parser.add_argument("--quad", action="store_true")
-    parser.add_argument("--auto-size", action="store_true")
-    parser.add_argument("--compress", choices=["geometry", "meshopt"])
-    parser.add_argument("--generate-parts", action="store_true")
-    parser.add_argument("--no-export-uv", action="store_true")
-
-
-def apply_common_model_args(args: argparse.Namespace, payload: dict[str, Any]) -> None:
-    mapping = {
-        "negative_prompt": args.negative_prompt,
-        "model_seed": args.model_seed,
-        "image_seed": args.image_seed,
-        "texture_seed": args.texture_seed,
-        "texture_quality": args.texture_quality,
-        "geometry_quality": args.geometry_quality,
-        "face_limit": args.face_limit,
-        "smart_low_poly": True if args.smart_low_poly else None,
-        "quad": True if args.quad else None,
-        "auto_size": True if args.auto_size else None,
-        "compress": args.compress,
-        "generate_parts": True if args.generate_parts else None,
-    }
-    for key, value in mapping.items():
-        if value is not None:
-            payload[key] = value
-    if args.no_texture:
-        payload["texture"] = False
-    if args.no_pbr:
-        payload["pbr"] = False
-    if args.no_export_uv:
-        payload["export_uv"] = False
-
-
-def maybe_wait_and_download(api_key: str, task_id: str, args: argparse.Namespace) -> dict[str, Any] | None:
-    if not args.wait:
-        return None
-    task = wait_for_task(api_key, task_id, args.interval, args.timeout)
-    print(json.dumps(task, indent=2))
-    if task.get("status") != "success":
-        raise TripoError(f"Task {task_id} ended as {task.get('status')}")
+def _finish(client: Client, job: dict, args) -> int:
+    print(f"Submitted job {job.get('id')} (type {job.get('type')}, "
+          f"status {job.get('status')}).")
+    if not args.wait and not args.download:
+        print("Not waiting. Poll with: status " + str(job.get("id")))
+        return 0
+    job = client.wait(job["id"], args.timeout, args.poll_interval)
+    print(f"Job {job['id']} succeeded.")
     if args.download:
-        download_outputs(task, Path(args.out_dir))
-    return task
-
-
-def cmd_text(args: argparse.Namespace) -> None:
-    api_key = api_key_from(args)
-    payload: dict[str, Any] = {
-        "type": "text_to_model",
-        "prompt": args.prompt,
-        "model_version": args.model_version,
-    }
-    apply_common_model_args(args, payload)
-    task_id = submit_task(api_key, payload)
-    maybe_wait_and_download(api_key, task_id, args)
-
-
-def cmd_image(args: argparse.Namespace) -> None:
-    api_key = api_key_from(args)
-    image = args.image
-    if image.startswith(("http://", "https://")):
-        file_obj = {"type": "image", "url": image}
+        written = download_outputs(job, args.out_dir, getattr(args, "format", None))
+        print("Files:\n  " + "\n  ".join(written))
     else:
-        token = multipart_upload(api_key, Path(image))
-        file_obj = {"type": "image", "file_token": token}
-    payload: dict[str, Any] = {
-        "type": "image_to_model",
-        "file": file_obj,
-        "model_version": args.model_version,
+        print("Outputs:", json.dumps(job.get("outputs", {}), indent=2))
+    return 0
+
+
+def _shared_job_fields(args) -> dict:
+    body: dict = {}
+    if getattr(args, "quality", None):
+        body["quality"] = args.quality
+    if getattr(args, "output", None):
+        body["output"] = args.output
+    if getattr(args, "face_count", None):
+        body["face_count"] = args.face_count
+    if getattr(args, "title", None):
+        body["title"] = args.title
+    return body
+
+
+def cmd_text(client: Client, args) -> int:
+    body = {"type": "text_to_3d", "prompt": args.prompt, **_shared_job_fields(args)}
+    if args.no_advance_control:
+        body["advance_control"] = False
+    if args.image:
+        body["image_url"] = client.resolve_source(args.image, "image")
+    return _finish(client, client.submit_job(body), args)
+
+
+def cmd_image(client: Client, args) -> int:
+    body = {
+        "type": "image_to_3d",
+        "image_url": client.resolve_source(args.image, "image"),
+        **_shared_job_fields(args),
     }
-    if args.enable_image_autofix:
-        payload["enable_image_autofix"] = True
-    if args.texture_alignment:
-        payload["texture_alignment"] = args.texture_alignment
-    if args.orientation:
-        payload["orientation"] = args.orientation
-    apply_common_model_args(args, payload)
-    task_id = submit_task(api_key, payload)
-    maybe_wait_and_download(api_key, task_id, args)
+    return _finish(client, client.submit_job(body), args)
 
 
-def cmd_status(args: argparse.Namespace) -> None:
-    api_key = api_key_from(args)
-    print(json.dumps(get_task(api_key, args.task_id), indent=2))
+def cmd_multiview(client: Client, args) -> int:
+    views = []
+    for view in ("front", "back", "left", "right"):
+        src = getattr(args, view)
+        if src:
+            views.append({"view": view, "image_url": client.resolve_source(src, "image")})
+    if not views:
+        raise Alpha3DError("multiview needs at least one of --front/--back/--left/--right")
+    body = {"type": "multiview_to_3d", "multi_view_images": views,
+            **_shared_job_fields(args)}
+    return _finish(client, client.submit_job(body), args)
 
 
-def cmd_download(args: argparse.Namespace) -> None:
-    api_key = api_key_from(args)
-    task = get_task(api_key, args.task_id)
-    if task.get("status") != "success":
-        raise TripoError(f"Task is {task.get('status')}; download URLs are available after success.")
-    download_outputs(task, Path(args.out_dir))
+def _edit_source(client: Client, args) -> dict:
+    if args.job:
+        return {"post_id": int(args.job)}
+    if args.model_url:
+        return {"model_url": client.resolve_source(args.model_url, "model")}
+    raise Alpha3DError("edit jobs need --job JOB_ID or --model-url URL/path")
 
 
-def normalized_post_type(value: str) -> str:
-    aliases = {
-        "convert_model": "conversion",
-        "conversion": "conversion",
-        "retarget": "animate_retarget",
-        "rig": "animate_rig",
-        "prerig": "animate_prerigcheck",
-        "prerigcheck": "animate_prerigcheck",
-        "lowpoly": "highpoly_to_lowpoly",
-    }
-    return aliases.get(value, value)
-
-
-def cmd_postprocess(args: argparse.Namespace) -> None:
-    api_key = api_key_from(args)
-    task_type = normalized_post_type(args.type)
-    payload: dict[str, Any] = {
-        "type": task_type,
-        "original_model_task_id": args.original_task_id,
-    }
-    default_versions = {
-        "texture_model": "v3.0-20250812",
-        "animate_rig": RIG_MODEL_VERSION,
-        "animate_retarget": RIG_MODEL_VERSION,
-        "highpoly_to_lowpoly": "P-v2.0-20251225",
-    }
-    if task_type == "animate_prerigcheck":
-        # The prerigcheck request schema has no model_version parameter.
-        if args.model_version:
-            eprint("warning: animate_prerigcheck takes no model_version; ignoring it")
-    elif args.model_version and args.model_version.lower() in {"default", "none"}:
-        # Omit model_version and let the API choose (needed when retargeting v1.0 rigs:
-        # the retarget enum rejects v1.0-20240301 as an explicit value).
-        pass
+def cmd_texture(client: Client, args) -> int:
+    if bool(args.prompt) == bool(args.image):
+        raise Alpha3DError("texture needs exactly one of --prompt or --image")
+    body = {"type": "texture_edit", **_edit_source(client, args), **_shared_job_fields(args)}
+    if args.prompt:
+        body["prompt"] = args.prompt
     else:
-        model_version = args.model_version or default_versions.get(task_type)
-        if model_version:
-            payload["model_version"] = model_version
-    if task_type == "texture_model":
-        if not args.texture_prompt:
-            raise TripoError("--texture-prompt is required for texture_model")
-        payload["texture_prompt"] = {"text": args.texture_prompt}
-        if args.texture_quality:
-            payload["texture_quality"] = args.texture_quality
-    elif task_type == "animate_rig":
-        if args.out_format:
-            payload["out_format"] = args.out_format
-        if args.rig_type:
-            payload["rig_type"] = args.rig_type
-        if args.spec:
-            payload["spec"] = args.spec
-    elif task_type == "animate_retarget":
-        # original_model_task_id must be the RIG task ID for retarget.
-        # v1.0 rigs (legacy humanoid path): the GLB animation bake is DEFECTIVE —
-        # limb mesh is skinned to twist bones whose GLB transforms are exported in
-        # the wrong space, collapsing arms into the torso (verified June 2026; the
-        # FBX export of the same task is correct). Force FBX on this path.
-        legacy_retarget = "model_version" not in payload
-        if legacy_retarget and (args.out_format or "glb") != "fbx":
-            if args.out_format == "glb":
-                raise TripoError(
-                    "v1.0-rig retargets must use --out-format fbx: Tripo's GLB bake corrupts "
-                    "twist-bone transforms (limbs collapse into the torso). Load the FBX with "
-                    "three.js FBXLoader, or convert FBX->GLB offline (Blender/FBX2glTF)."
-                )
-            eprint("note: v1.0-rig retarget defaults to out_format=fbx (GLB bake is broken for this path)")
-            payload["out_format"] = "fbx"
-        if legacy_retarget and args.animations:
-            raise TripoError(
-                "v1.0-rig retargets must request ONE animation per task: batching produces an FBX "
-                "with one armature per clip (Armature.001, .002, ...) whose name-colliding bones "
-                "bind to the wrong skeleton and pitch the body. Submit separate tasks with --animation."
-            )
-        if args.animations:
-            animations = [item.strip() for item in args.animations.split(",") if item.strip()]
-            validate_animations(animations, rig_model_version=payload.get("model_version"))
-            if len(animations) > RETARGET_BATCH_LIMIT:
-                raise TripoError(
-                    f"animate_retarget accepts at most {RETARGET_BATCH_LIMIT} animations per task; "
-                    f"got {len(animations)}. Split into multiple tasks."
-                )
-            payload["animations"] = animations
-        elif args.animation:
-            validate_animations([args.animation], rig_model_version=payload.get("model_version"))
-            payload["animation"] = args.animation
-        else:
-            raise TripoError("--animation or --animations is required for animate_retarget")
-        if args.out_format:
-            payload["out_format"] = args.out_format
-        if args.animate_in_place:
-            eprint(
-                "warning: animate_in_place is VERIFIED to corrupt retargeted clips "
-                "(mirrored/crossed limbs on v1.0 rigs, exploded skinning on v2.5 rigs, June 2026). "
-                "Prefer baked root motion and strip the root translation track in the engine."
-            )
-            payload["animate_in_place"] = True
-        if args.no_bake_animation:
-            payload["bake_animation"] = False
-        if args.no_export_with_geometry:
-            payload["export_with_geometry"] = False
-    elif task_type == "conversion":
-        if not args.format:
-            raise TripoError("--format is required for conversion")
-        payload["format"] = args.format
-        for key in ("face_limit", "texture_size", "flatten_bottom_threshold"):
-            value = getattr(args, key)
-            if value is not None:
-                payload[key] = value
-        if args.quad:
-            payload["quad"] = True
-        if args.force_symmetry:
-            payload["force_symmetry"] = True
-        if args.flatten_bottom:
-            payload["flatten_bottom"] = True
-    elif task_type == "highpoly_to_lowpoly":
-        if args.face_limit:
-            payload["face_limit"] = args.face_limit
-    elif task_type == "stylize_model":
-        if not args.style:
-            raise TripoError("--style is required for stylize_model")
-        payload["style"] = args.style
-        if args.block_size:
-            payload["block_size"] = args.block_size
-
-    task_id = submit_task(api_key, payload)
-    maybe_wait_and_download(api_key, task_id, args)
+        body["image_url"] = client.resolve_source(args.image, "image")
+    return _finish(client, client.submit_job(body), args)
 
 
-def resolve_rig_version(rig_type: str, override: str | None) -> str:
-    """Measured June 2026: the v2.x limb-chain rigger fails on humanoids (0/16,
-    asymmetric chains) while v1.0 produces a proper anatomical skeleton; v2.x is
-    solid for creatures. Route by body plan unless explicitly overridden."""
-    if override:
-        return override
-    return "v1.0-20240301" if rig_type == "biped" else RIG_MODEL_VERSION
+def cmd_rig(client: Client, args) -> int:
+    body = {"type": "rigging", **_edit_source(client, args), **_shared_job_fields(args)}
+    return _finish(client, client.submit_job(body), args)
 
 
-def to_legacy_biped_presets(animations: list[str]) -> list[str]:
-    """v1.0 rigs use the preset:biped:* library; map plain v2.5-style names onto it
-    so callers can say preset:idle regardless of which rig path gets chosen."""
-    mapped = []
-    for animation in animations:
-        suffix = animation[len("preset:"):] if animation.startswith("preset:") else None
-        if suffix and ":" not in suffix:
-            mapped.append(f"preset:biped:{suffix}")
-        else:
-            mapped.append(animation)
-    return mapped
+def cmd_retopology(client: Client, args) -> int:
+    body = {"type": "retopology", **_edit_source(client, args), **_shared_job_fields(args)}
+    if args.detail:
+        body["detail"] = args.detail
+    if args.polygon_type:
+        body["polygon_type"] = args.polygon_type
+    return _finish(client, client.submit_job(body), args)
 
 
-def cmd_character_pipeline(args: argparse.Namespace) -> None:
-    api_key = api_key_from(args)
-    if not args.model_task_id and not args.prompt:
-        raise TripoError("--prompt is required unless --model-task-id reuses an existing generation task")
-    animations = [item.strip() for item in args.animations.split(",") if item.strip()]
-    if animations and args.spec == "mixamo":
-        raise TripoError(
-            "spec=mixamo rigs cannot be used with Tripo animate_retarget. "
-            "Use --animations '' and retarget external clips (e.g. Mixamo) onto the rig yourself, "
-            "or keep --spec tripo for Tripo preset animations."
-        )
-    # Loose catalog check now (both namespaces allowed); strict per-rig-type
-    # validation happens after prerigcheck, before rig credits are spent.
-    validate_animations(animations, None, None)
-
-    out_dir = Path(args.out_dir)
-    if args.model_task_id:
-        model_task_id = args.model_task_id
-        eprint(f"Skipping generation; reusing model task {model_task_id}")
-    else:
-        prompt = args.prompt
-        # The T-pose suffix is biped-specific; creature prompts need their own stance language.
-        if (args.rig_type in (None, "biped")
-                and "t-pose" not in prompt.lower() and "a-pose" not in prompt.lower()):
-            prompt = (
-                f"{prompt}, full-body T-pose for rigging, arms straight out to the sides, "
-                "legs apart and visible, front facing, symmetric, no props attached to the body"
-            )
-        text_payload: dict[str, Any] = {
-            "type": "text_to_model",
-            "prompt": prompt,
-            "model_version": args.model_version,
-            "texture_quality": args.texture_quality,
-            "geometry_quality": args.geometry_quality,
-            "pbr": True,
-        }
-        if args.face_limit:
-            text_payload["face_limit"] = args.face_limit
-        model_task_id = submit_task(api_key, text_payload)
-        model_task = wait_for_task(api_key, model_task_id, args.interval, args.timeout)
-        if model_task.get("status") != "success":
-            raise TripoError(f"Model task failed: {model_task.get('status')}")
-        download_outputs(model_task, out_dir / "base")
-        eprint("Check the downloaded rendered_image: the character must be in a clear T/A-pose before rigging.")
-
-    check_id = submit_task(api_key, {
-        "type": "animate_prerigcheck",
-        "original_model_task_id": model_task_id,
-    })
-    check_task = wait_for_task(api_key, check_id, args.interval, args.timeout)
-    print(json.dumps(check_task, indent=2))
-    output = check_task.get("output") or {}
-    if output.get("riggable") is False:
-        if not args.force_rig:
-            raise TripoError(
-                f"Prerigcheck reports the model is not riggable: {output}. "
-                "Best fix: regenerate with a clearer full-body T-pose (or a T-pose reference image). "
-                "Tripo docs note a false result is not always final; pass --force-rig to attempt anyway."
-            )
-        eprint("warning: proceeding despite riggable=false (--force-rig)")
-    detected_rig_type = output.get("rig_type")
-    rig_type = args.rig_type or detected_rig_type or "biped"
-    if args.rig_type and detected_rig_type and args.rig_type != detected_rig_type:
-        eprint(
-            f"warning: prerigcheck detected rig_type={detected_rig_type} "
-            f"but --rig-type {args.rig_type} was requested; using {args.rig_type}"
-        )
-    rig_model_version = resolve_rig_version(rig_type, args.rig_model_version)
-    legacy = rig_model_version.startswith("v1.0")
-    if legacy:
-        animations = to_legacy_biped_presets(animations)
-    eprint(f"Using rig_type={rig_type} rig_model_version={rig_model_version}"
-           + (f" animations={','.join(animations)}" if animations else ""))
-    validate_animations(animations, rig_type if not legacy else None, rig_model_version)
-
-    # Auto-rigging is nondeterministic: the same model can produce a degenerate
-    # skeleton on one attempt and a healthy one on the next. Retry before giving up.
-    attempts = 1 + max(0, args.rig_retries)
-    rig_id = None
-    last_detail = "no rig attempt succeeded"
-    for attempt in range(1, attempts + 1):
-        candidate_id = submit_task(api_key, {
-            "type": "animate_rig",
-            "original_model_task_id": model_task_id,
-            "model_version": rig_model_version,
-            "rig_type": rig_type,
-            "spec": args.spec,
-            "out_format": "glb",
-        })
-        rig_task = wait_for_task(api_key, candidate_id, args.interval, args.timeout)
-        if rig_task.get("status") != "success":
-            last_detail = f"rig task ended as {rig_task.get('status')} (error_code={rig_task.get('error_code')})"
-            eprint(f"rig attempt {attempt}/{attempts}: {last_detail}")
-            continue
-        suffix = "rig" if attempt == 1 else f"rig-attempt{attempt}"
-        rig_paths = download_outputs(rig_task, out_dir / suffix)
-        rig_glbs = [p for p in rig_paths if p.suffix == ".glb"]
-        problems = []
-        if rig_glbs:
-            description, problems = validate_rig_glb(rig_glbs[0], rig_type)
-            eprint(f"Rig skeleton ({attempt}/{attempts}): {description}")
-        if not problems:
-            rig_id = candidate_id
-            break
-        last_detail = "; ".join(problems)
-        eprint(f"rig attempt {attempt}/{attempts} failed validation: {last_detail}")
-    if rig_id is None:
-        if not args.force_rig:
-            raise TripoError(
-                f"No structurally valid rig after {attempts} attempt(s) ({last_detail}). "
-                "Retargets on a bad rig warp the character. Regenerate the base model with "
-                "clearer limb separation (strict T-pose, arms horizontal, legs apart and visible, "
-                "no long skirt/cape/props fusing limbs to the body), or pass --force-rig to use "
-                "the last rig anyway."
-            )
-        rig_id = candidate_id
-        eprint(f"warning: using unvalidated rig ({last_detail}); continuing (--force-rig)")
-
-    # Retarget references the RIG task ID. v2.5 rigs batch up to 5 presets per
-    # task; v1.0 rigs must take ONE per task (batched FBX exports one armature
-    # per clip whose name-colliding bones cross-bind and pitch the body).
-    batch_size = 1 if legacy else RETARGET_BATCH_LIMIT
-    for start in range(0, len(animations), batch_size):
-        batch = animations[start:start + batch_size]
-        # v1.0 GLB animation bake is defective (twist-bone space bug collapses limbs);
-        # the FBX export of the same task is correct. See api-notes.md.
-        retarget_payload: dict[str, Any] = {
-            "type": "animate_retarget",
-            "original_model_task_id": rig_id,
-            "animations": batch,
-            "out_format": "fbx" if legacy else "glb",
-        }
-        if not legacy:
-            retarget_payload["model_version"] = rig_model_version
-        if args.animate_in_place:
-            eprint(
-                "warning: animate_in_place is VERIFIED to corrupt retargeted clips "
-                "(mirrored/crossed limbs on v1.0 rigs, exploded skinning on v2.5 rigs, June 2026). "
-                "Prefer baked root motion and strip the root translation track in the engine."
-            )
-            retarget_payload["animate_in_place"] = True
-        anim_id = submit_task(api_key, retarget_payload)
-        anim_task = wait_for_task(api_key, anim_id, args.interval, args.timeout)
-        if anim_task.get("status") != "success":
-            raise TripoError(f"Animation batch {batch} failed: {anim_task.get('status')}")
-        batch_name = safe_name("-".join(item.split(":")[-1] for item in batch))
-        download_outputs(anim_task, out_dir / batch_name)
-    eprint("Inspect gltf.animations clip names/counts in each download before wiring the AnimationMixer.")
+def cmd_uv_unwrap(client: Client, args) -> int:
+    body = {"type": "uv_unwrap", **_edit_source(client, args), **_shared_job_fields(args)}
+    return _finish(client, client.submit_job(body), args)
 
 
-def load_glb(path: Path) -> tuple[dict[str, Any], bytes]:
-    import struct
-    data = path.read_bytes()
-    if data[:4] != b"glTF":
-        raise TripoError(f"Not a GLB file: {path}")
-    offset = 12
-    gltf: dict[str, Any] | None = None
-    bin_chunk = b""
-    while offset < len(data):
-        clen, ctype = struct.unpack_from("<II", data, offset)
-        chunk = data[offset + 8:offset + 8 + clen]
-        if ctype == 0x4E4F534A:
-            gltf = json.loads(chunk)
-        elif ctype == 0x004E4942:
-            bin_chunk = chunk
-        offset += 8 + clen
-    if gltf is None:
-        raise TripoError(f"No JSON chunk in GLB: {path}")
-    return gltf, bin_chunk
+def cmd_segment(client: Client, args) -> int:
+    body = {"type": "segment", **_edit_source(client, args), **_shared_job_fields(args)}
+    return _finish(client, client.submit_job(body), args)
 
 
-def _read_accessor(gltf: dict[str, Any], bin_chunk: bytes, idx: int) -> list[tuple[float, ...]]:
-    import struct
-    comp = {5126: ("f", 4), 5123: ("H", 2), 5125: ("I", 4)}
-    ncomp = {"SCALAR": 1, "VEC3": 3, "VEC4": 4}
-    acc = gltf["accessors"][idx]
-    bv = gltf["bufferViews"][acc["bufferView"]]
-    start = bv.get("byteOffset", 0) + acc.get("byteOffset", 0)
-    n = ncomp[acc["type"]]
-    fmt, _ = comp[acc["componentType"]]
-    count = acc["count"]
-    vals = struct.unpack_from(f"<{count * n}{fmt}", bin_chunk, start)
-    return [vals[i * n:(i + 1) * n] for i in range(count)]
+def cmd_convert(client: Client, args) -> int:
+    body = {"type": "convert", "target_format": args.format,
+            **_edit_source(client, args)}
+    return _finish(client, client.submit_job(body), args)
 
 
-def validate_animation_glb(path: Path) -> tuple[list[str], list[str]]:
-    """Keyframe-level QA for retargeted clips. Returns (report_lines, problems).
-    Warp signatures: scale tracks, or translation tracks on non-root bones that
-    deviate far from the bone's rest offset (limb stretching)."""
-    import math
-    gltf, bin_chunk = load_glb(path)
-    nodes = gltf.get("nodes", [])
-    roots = {"Armature", "Root", "Hip", "Pelvis", "tripo::Root"}
-    report: list[str] = []
-    problems: list[str] = []
-    animations = gltf.get("animations", [])
-    if not animations:
-        return ["no animations in file"], ["no animation clips found"]
-    for anim in animations:
-        dur = 0.0
-        rot_bones: set[str] = set()
-        big_rot: dict[str, int] = {}
-        for ch in anim["channels"]:
-            sampler = anim["samplers"][ch["sampler"]]
-            times = _read_accessor(gltf, bin_chunk, sampler["input"])
-            out = _read_accessor(gltf, bin_chunk, sampler["output"])
-            node = nodes[ch["target"]["node"]] if ch["target"].get("node") is not None else {}
-            name = node.get("name", "?")
-            dur = max(dur, times[-1][0])
-            path_kind = ch["target"]["path"]
-            if path_kind == "rotation":
-                rot_bones.add(name)
-                base = out[0]
-                amp = 0.0
-                for q in out:
-                    dot = abs(sum(a * b for a, b in zip(base, q)))
-                    amp = max(amp, 2 * math.acos(min(1.0, dot)))
-                if math.degrees(amp) > 170:
-                    big_rot[name] = round(math.degrees(amp))
-            elif path_kind == "scale":
-                problems.append(f"{anim.get('name')}: scale track on {name} (warp risk)")
-            elif path_kind == "translation" and name not in roots and name.split("::")[-1] not in roots:
-                rest = node.get("translation", [0, 0, 0])
-                restlen = math.sqrt(sum(c * c for c in rest)) or 1e-9
-                dev = max(math.sqrt(sum((v[i] - rest[i]) ** 2 for i in range(3))) for v in out)
-                if dev / restlen > 0.5:
-                    problems.append(
-                        f"{anim.get('name')}: translation track on non-root bone {name} deviates "
-                        f"{dev / restlen:.1f}x its rest offset (limb stretch warp)"
-                    )
-        report.append(f"{anim.get('name')}: {dur:.2f}s, {len(anim['channels'])} channels, {len(rot_bones)} bones rotating")
-        if big_rot:
-            report.append(f"  rotation amplitude >170deg (check visually): {big_rot}")
-    return report, problems
+def cmd_status(client: Client, args) -> int:
+    job = client.get_job(args.job_id)
+    print(json.dumps(job, indent=2))
+    return 0
 
 
-def cmd_validate_animation(args: argparse.Namespace) -> None:
-    report, problems = validate_animation_glb(Path(args.glb_path))
-    for line in report:
-        print(line)
-    if problems:
-        raise TripoError("Animation validation failed: " + "; ".join(problems))
-    print("Clips look structurally sound (verify motion visually in the engine).")
+def cmd_download(client: Client, args) -> int:
+    job = client.get_job(args.job_id)
+    status = str(job.get("status", "")).lower()
+    if status not in SUCCESS_STATUSES:
+        raise Alpha3DError(f"Job {args.job_id} is {status!r}, not ready to download")
+    written = download_outputs(job, args.out_dir, args.format)
+    print("Files:\n  " + "\n  ".join(written))
+    return 0
 
 
-def cmd_validate_rig(args: argparse.Namespace) -> None:
-    description, problems = validate_rig_glb(Path(args.glb_path), args.rig_type)
-    print(description)
-    if problems:
-        raise TripoError("Rig validation failed: " + "; ".join(problems))
-    print("Rig looks structurally valid.")
+def cmd_usage(client: Client, args) -> int:
+    print(json.dumps(client.usage(), indent=2))
+    return 0
 
 
-def add_shared_runtime_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--api-key")
-    parser.add_argument("--wait", action="store_true")
-    parser.add_argument("--download", action="store_true")
-    parser.add_argument("--out-dir", default="tripo-output")
-    parser.add_argument("--interval", type=int, default=8)
-    parser.add_argument("--timeout", type=int, default=600)
+def cmd_list(client: Client, args) -> int:
+    print(json.dumps(client.list_jobs(args.limit), indent=2))
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
+
+
+def _add_wait_flags(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--wait", action="store_true", help="poll until the job finishes")
+    p.add_argument("--download", action="store_true", help="download outputs when done")
+    p.add_argument("--out-dir", default="assets/models", help="download directory")
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
+                   help="max seconds to wait (default 900)")
+    p.add_argument("--poll-interval", type=int, default=DEFAULT_POLL_INTERVAL,
+                   help="seconds between polls (default 20)")
+
+
+def _add_gen_flags(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--quality", choices=["standard", "pbr", "low_poly"])
+    p.add_argument("--output", choices=["textured", "geometry"])
+    p.add_argument("--face-count", type=int)
+    p.add_argument("--title")
+    _add_wait_flags(p)
+
+
+def _add_edit_source_flags(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--job", help="post_id of a succeeded generation to refine")
+    p.add_argument("--model-url", help="https URL or local model file to use as source")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Tripo OpenAPI 3D asset helper")
+    parser = argparse.ArgumentParser(
+        description="Alpha3D /v1 client for Three.js game assets (Path B — API key). "
+                    "For the MCP connector path, call the Alpha3D MCP tools directly.")
+    parser.add_argument("--api-key", help="Alpha3D API key (else ALPHA3D_API_KEY)")
+    parser.add_argument("--base-url", help="API base (else ALPHA3D_API_BASE or default)")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    text = sub.add_parser("text", help="submit text_to_model")
-    text.add_argument("--prompt", required=True)
-    add_common_model_args(text)
-    add_shared_runtime_args(text)
-    text.set_defaults(func=cmd_text)
+    p = sub.add_parser("text", help="text_to_3d")
+    p.add_argument("--prompt", required=True)
+    p.add_argument("--image", help="optional reference image (local path or https URL)")
+    p.add_argument("--no-advance-control", action="store_true",
+                   help="auto-generate the reference image (FLUX + rembg) instead of "
+                        "supplying one")
+    _add_gen_flags(p)
+    p.set_defaults(func=cmd_text)
 
-    image = sub.add_parser("image", help="submit image_to_model from local path or URL")
-    image.add_argument("--image", required=True)
-    image.add_argument("--enable-image-autofix", action="store_true")
-    image.add_argument("--texture-alignment", choices=["original_image", "geometry"])
-    image.add_argument("--orientation", choices=["default", "align_image"])
-    add_common_model_args(image)
-    add_shared_runtime_args(image)
-    image.set_defaults(func=cmd_image)
+    p = sub.add_parser("image", help="image_to_3d")
+    p.add_argument("--image", required=True, help="local path or https URL")
+    _add_gen_flags(p)
+    p.set_defaults(func=cmd_image)
 
-    status = sub.add_parser("status", help="get task status")
-    status.add_argument("task_id")
-    status.add_argument("--api-key")
-    status.set_defaults(func=cmd_status)
+    p = sub.add_parser("multiview", help="multiview_to_3d")
+    for view in ("front", "back", "left", "right"):
+        p.add_argument(f"--{view}", help=f"{view} view (local path or https URL)")
+    _add_gen_flags(p)
+    p.set_defaults(func=cmd_multiview)
 
-    download = sub.add_parser("download", help="download successful task outputs")
-    download.add_argument("task_id")
-    download.add_argument("--api-key")
-    download.add_argument("--out-dir", default="tripo-output")
-    download.set_defaults(func=cmd_download)
+    p = sub.add_parser("texture", help="texture_edit (retexture/restyle)")
+    _add_edit_source_flags(p)
+    p.add_argument("--prompt", help="describe the new look (XOR --image)")
+    p.add_argument("--image", help="reference image (XOR --prompt)")
+    _add_gen_flags(p)
+    p.set_defaults(func=cmd_texture)
 
-    post = sub.add_parser("postprocess", help="submit Tripo postprocess task")
-    post.add_argument("--type", required=True)
-    post.add_argument("--original-task-id", required=True)
-    post.add_argument("--model-version")
-    post.add_argument("--texture-prompt")
-    post.add_argument("--texture-quality", choices=["standard", "detailed", "extreme"])
-    post.add_argument("--out-format", choices=["glb", "fbx"])
-    post.add_argument("--rig-type", choices=["biped", "quadruped", "hexapod", "octopod", "avian", "serpentine", "aquatic"])
-    post.add_argument("--spec", choices=["tripo", "mixamo"])
-    post.add_argument("--animation")
-    post.add_argument("--animations")
-    post.add_argument("--animate-in-place", action="store_true")
-    post.add_argument("--no-bake-animation", action="store_true")
-    post.add_argument("--no-export-with-geometry", action="store_true")
-    post.add_argument("--format", choices=["GLTF", "USDZ", "FBX", "OBJ", "STL", "3MF"])
-    post.add_argument("--face-limit", type=int)
-    post.add_argument("--texture-size", type=int)
-    post.add_argument("--quad", action="store_true")
-    post.add_argument("--force-symmetry", action="store_true")
-    post.add_argument("--flatten-bottom", action="store_true")
-    post.add_argument("--flatten-bottom-threshold", type=float)
-    post.add_argument("--style", choices=["lego", "voxel", "voronoi", "minecraft"])
-    post.add_argument("--block-size", type=int)
-    add_shared_runtime_args(post)
-    post.set_defaults(func=cmd_postprocess)
+    p = sub.add_parser("rig", help="rigging (armature + skin weights)")
+    _add_edit_source_flags(p)
+    _add_gen_flags(p)
+    p.set_defaults(func=cmd_rig)
 
-    validate = sub.add_parser("validate-rig", help="check a downloaded rig GLB for degenerate auto-rig skeletons")
-    validate.add_argument("glb_path")
-    validate.add_argument("--rig-type", default="biped", choices=["biped", "quadruped", "hexapod", "octopod", "avian", "serpentine", "aquatic"])
-    validate.set_defaults(func=cmd_validate_rig)
+    p = sub.add_parser("retopology", help="retopology")
+    _add_edit_source_flags(p)
+    p.add_argument("--detail", choices=["high", "medium", "low"])
+    p.add_argument("--polygon-type", choices=["triangle", "quadrilateral"])
+    _add_gen_flags(p)
+    p.set_defaults(func=cmd_retopology)
 
-    validate_anim = sub.add_parser("validate-animation", help="keyframe-level QA for retargeted clip GLBs (warp signatures)")
-    validate_anim.add_argument("glb_path")
-    validate_anim.set_defaults(func=cmd_validate_animation)
+    p = sub.add_parser("uv-unwrap", help="uv_unwrap")
+    _add_edit_source_flags(p)
+    _add_gen_flags(p)
+    p.set_defaults(func=cmd_uv_unwrap)
 
-    pipeline = sub.add_parser("character-pipeline", help="generate, prereig-check, rig, animate, and download a character")
-    pipeline.add_argument("--prompt")
-    pipeline.add_argument("--model-task-id",
-                          help="reuse an existing generation task instead of generating (skips --prompt)")
-    pipeline.add_argument("--rig-retries", type=int, default=2,
-                          help="extra rig attempts when validation fails; rigging is nondeterministic (default 2)")
-    pipeline.add_argument("--rig-model-version", default=None,
-                          help="rig model version override. Default: auto by rig type — "
-                               "biped -> v1.0-20240301 (anatomical skeleton, FBX clips; the v2.x "
-                               "biped rigger and GLB bake are broken), creatures -> v2.5-20260210 (GLB)")
-    pipeline.add_argument("--animations", default="preset:idle,preset:walk,preset:run")
-    pipeline.add_argument("--model-version", default="v3.1-20260211")
-    pipeline.add_argument("--texture-quality", default="detailed", choices=["standard", "detailed", "extreme"])
-    pipeline.add_argument("--geometry-quality", default="standard", choices=["standard", "detailed"])
-    pipeline.add_argument("--face-limit", type=int)
-    pipeline.add_argument(
-        "--rig-type",
-        choices=["biped", "quadruped", "hexapod", "octopod", "avian", "serpentine", "aquatic"],
-        help="override the prerigcheck-detected rig type (default: auto-detect, fallback biped)",
-    )
-    pipeline.add_argument("--spec", default="tripo", choices=["tripo", "mixamo"],
-                          help="mixamo rigs cannot use Tripo preset retargeting")
-    pipeline.add_argument("--force-rig", action="store_true",
-                          help="attempt rigging even if prerigcheck reports riggable=false")
-    pipeline.add_argument("--animate-in-place", action="store_true")
-    pipeline.add_argument("--api-key")
-    pipeline.add_argument("--out-dir", default="tripo-character")
-    pipeline.add_argument("--interval", type=int, default=8)
-    pipeline.add_argument("--timeout", type=int, default=900)
-    pipeline.set_defaults(func=cmd_character_pipeline)
+    p = sub.add_parser("segment", help="segment into parts")
+    _add_edit_source_flags(p)
+    _add_gen_flags(p)
+    p.set_defaults(func=cmd_segment)
+
+    p = sub.add_parser("convert", help="convert format")
+    _add_edit_source_flags(p)
+    p.add_argument("--format", required=True, choices=["GLB", "OBJ", "FBX", "STL"])
+    _add_wait_flags(p)
+    p.set_defaults(func=cmd_convert)
+
+    p = sub.add_parser("status", help="poll a job")
+    p.add_argument("job_id")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("download", help="download a finished job's outputs")
+    p.add_argument("job_id")
+    p.add_argument("--out-dir", default="assets/models")
+    p.add_argument("--format", choices=["glb", "obj", "fbx", "stl", "thumbnail"])
+    p.set_defaults(func=cmd_download)
+
+    p = sub.add_parser("usage", help="credit balance + usage")
+    p.set_defaults(func=cmd_usage)
+
+    p = sub.add_parser("list", help="list recent API jobs")
+    p.add_argument("--limit", type=int, default=20)
+    p.set_defaults(func=cmd_list)
 
     return parser
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
+    key = args.api_key or os.environ.get("ALPHA3D_API_KEY")
+    if not key:
+        print("ERROR: no API key. Pass --api-key or set ALPHA3D_API_KEY. "
+              "Run the director credential probe first if unsure. Alternatively use "
+              "the Alpha3D MCP connector (no key needed).", file=sys.stderr)
+        return 2
+    base = args.base_url or os.environ.get("ALPHA3D_API_BASE") or DEFAULT_BASE
+    client = Client(key, base)
+
     try:
-        args.func(args)
-    except TripoError as exc:
-        eprint(f"threejs_3d_asset.py: {exc}")
+        return args.func(client, args)
+    except Alpha3DError as exc:
+        print(f"ERROR: {_scrub(str(exc), key)}", file=sys.stderr)
         return 1
-    return 0
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

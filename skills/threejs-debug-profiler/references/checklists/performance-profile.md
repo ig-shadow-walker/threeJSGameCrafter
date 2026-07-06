@@ -1,7 +1,7 @@
 # Performance Profile Checklist
 
 - Record target device, browser, viewport, DPR, and build mode.
-- Measure FPS and frame time after warmup.
+- Measure FPS and frame time over >= 3s after a 2s warmup; target >= 55 FPS on desktop and >= 30 FPS on mid-tier mobile.
 - Capture `renderer.info.render.calls`, triangles, points, lines, geometries, and textures.
 - Count visible objects and animated objects.
 - Identify expensive materials, custom shaders, shadows, reflections, and post-processing passes.

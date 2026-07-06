@@ -7,7 +7,7 @@ Use this after authored forms exist. Rendering polish cannot compensate for miss
 - Set `renderer.outputColorSpace = THREE.SRGBColorSpace`.
 - Choose tone mapping deliberately. `ACESFilmicToneMapping` often works for cinematic stylized scenes; simpler tone mapping can be better for bright arcade readability.
 - Tune exposure against active gameplay, not a static title view.
-- Cap DPR, especially on mobile. Start around `Math.min(devicePixelRatio, 1.5 or 2)` and profile.
+- Cap DPR. Use `Math.min(window.devicePixelRatio, 2)` as the baseline, and lower to `1.5` on mobile after profiling. This is the canonical DPR value; other references defer to it.
 - Update renderer, camera, composer, and CSS UI dimensions on resize.
 - Use a transparent or explicit background only when composition requires it.
 
@@ -31,6 +31,8 @@ Use a small readable stack:
 - Contact shadows or shadow blobs: ground important objects.
 
 Avoid many unmeasured dynamic lights. Prefer baked-looking material/emissive cues, light cards, or small unlit decals for repeated signals.
+
+Physically-based light units: Three.js r155+ uses physically-correct light units by default (`useLegacyLights` was removed in r165). DirectionalLight/AmbientLight intensity stays roughly 1-3, but PointLight/SpotLight intensity scales with distance squared and often needs values in the tens or hundreds to read. If a ported light renders black, suspect a legacy-unit assumption first; this is the most likely cause of a broken dark scene.
 
 ## Shadows And Contact
 
@@ -59,6 +61,7 @@ Avoid many unmeasured dynamic lights. Prefer baked-looking material/emissive cue
 
 Use post as a finishing pass:
 
+- With EffectComposer, a raw `RenderPass` bypasses `renderer.outputColorSpace` and `toneMapping`. End the chain with `OutputPass` (r150+) so tone mapping and sRGB are applied once, after all passes. Put bloom before `OutputPass`.
 - Bloom: only authored emissive elements, not all bright materials.
 - Vignette: subtle focus, never heavy darkness.
 - Film grain/noise: low opacity; avoid compression-like artifacts.

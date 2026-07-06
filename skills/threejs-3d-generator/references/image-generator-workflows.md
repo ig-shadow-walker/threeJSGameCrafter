@@ -1,6 +1,6 @@
 # Three.js Image Generator Pairing
 
-Use `threejs-image-generator` when a strong 2D input improves `threejs-3d-generator` output or when the final asset is 2D rather than 3D. The current image provider is Google's Gemini image API.
+Use `threejs-image-generator` when a strong 2D input improves `threejs-3d-generator` output or when the final asset is 2D rather than 3D. The default image provider is Alpha3D (FLUX), available via the same MCP connector or `ALPHA3D_API_KEY`; Gemini or another provider can be substituted.
 
 ## 2D To 3D Reference Images
 
@@ -57,11 +57,10 @@ Use `threejs-image-generator` directly, not 3D generation, for:
 After generating a 2D reference:
 
 1. Save the image in the working project, usually `assets/concepts/`.
-2. Use the `threejs-3d-generator` `image` command with `--image <path>`.
-3. Use `--enable-image-autofix` for rough images.
-4. Use `--texture-alignment original_image` when visual match matters.
-5. Use `--texture-alignment geometry` when structural accuracy matters.
-6. Download generated 3D outputs immediately after success.
+2. Path B: run the `threejs-3d-generator` `image` command with `--image <path>` (it presigns + uploads the local file, then submits `image_to_3d`). For several angles of one object, use `multiview` with `--front/--back/--left/--right`.
+3. Path A: pass the image URL to the MCP `generate_3d` tool (`image_url` or `multi_view_images`).
+4. Keep `--quality pbr --output textured` when visual fidelity matters; drop to `low_poly`/`--output geometry` for background props.
+5. Download generated 3D outputs immediately after success — URLs expire.
 
 ## Avoid
 

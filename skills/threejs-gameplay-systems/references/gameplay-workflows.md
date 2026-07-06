@@ -100,7 +100,7 @@ Rules:
 
 - Keep collision proxies simple and visible in debug mode.
 - Do not use detailed visual meshes for collision.
-- Clamp delta or use fixed-step simulation for physics.
+- Clamp delta or use fixed-step simulation for physics. The bundled scaffold's `src/core/Loop.ts` is an intentionally variable-step arcade loop (clamps delta only); physics gameplay must add the fixed-timestep accumulator from `references/physics-engine-selection.md` rather than simulating on the raw delta.
 - Reconcile physics transforms and visual transforms in one place.
 - Test high-speed movement against tunneling and camera loss.
 - Report engine choice, package installed, timestep, body count, collider count, CCD use, sensors, and risky colliders.

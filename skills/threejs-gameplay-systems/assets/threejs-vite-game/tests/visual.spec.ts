@@ -83,6 +83,16 @@ test('renders a nonblank interactive game canvas', async ({ page }, testInfo) =>
     .poll(async () => page.evaluate(() => window.__THREE_GAME_DIAGNOSTICS__?.player.position.z ?? 0))
     .toBeLessThan(before - 0.3);
 
+  if (!testInfo.project.name.includes('mobile')) {
+    // Elapsed has accrued by now; pressing R should reset the run to a fresh state.
+    const elapsedBeforeReset = await page.evaluate(() => window.__THREE_GAME_DIAGNOSTICS__?.elapsed ?? 0);
+    expect(elapsedBeforeReset).toBeGreaterThan(0);
+    await page.keyboard.press('KeyR');
+    await expect
+      .poll(async () => page.evaluate(() => window.__THREE_GAME_DIAGNOSTICS__?.elapsed ?? Infinity))
+      .toBeLessThan(elapsedBeforeReset);
+  }
+
   const screenshot = await page.screenshot({ fullPage: true });
   await testInfo.attach(`${testInfo.project.name}-game`, {
     body: screenshot,
