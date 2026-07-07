@@ -24,7 +24,7 @@ Before assuming the connector is missing, check whether the Alpha3D MCP tools ar
 | --- | --- |
 | `list_generation_options` | List every operation with its credit cost and required params. Call before spending credits so you can tell the user what a job costs. |
 | `get_credit_balance` | Current credit balance. |
-| `generate_3d` | Text, image (`image_url`), or multiview (`multi_view_images`, 1–3 of `{view, image_url}`) → 3D. `quality`: `standard`/`pbr`/`low_poly`. `face_count` optional. Returns a `job_id`. |
+| `generate_3d` | Text, image (`image_url`), or multiview (`multi_view_images`, 1–4 of `{view, image_url}` where view is front/back/left/right) → 3D. `quality`: `standard`/`pbr`/`low_poly`. `face_count` optional. Returns a `job_id`. |
 | `generate_image` | FLUX text/image/style → image (free, rate-limited). Returns the image inline. |
 | `remove_background` | Cutout → transparent PNG (free, rate-limited). |
 | `rig_3d` | Auto-rig a T-pose humanoid mesh (`post_id` of a generation, or `model_url`). Returns a `job_id`. |

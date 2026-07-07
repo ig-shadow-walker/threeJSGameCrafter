@@ -22,6 +22,8 @@ Use this reference only after `threejs-game-director` has attempted to load the 
 
 ## External Asset Sourcing Gate
 
+The 3D and image generators default to **Alpha3D**, reachable two ways: an **MCP connector** (OAuth, no key — usable if the Alpha3D MCP tools are present in the session) or an **API key** (`ALPHA3D_API_KEY`). If the MCP connector is available, external 3D/image generation is not blocked even when `ALPHA3D_API_KEY` is `MISSING`; record which path was used.
+
 For broad or premium game work, fill this before the graphics phase:
 
 ```text
@@ -45,7 +47,7 @@ External asset sourcing:
 Allowed reasons to skip actual external generation after loading the relevant skills:
 
 - The user explicitly requested no external AI/assets or offline-only output.
-- Credential probe output shows the relevant key is `MISSING`.
+- Credential probe output shows the relevant key is `MISSING` AND the Alpha3D MCP connector is not available (for 3D/image; the MCP path needs no key).
 - A real API/network/quota error occurs after an attempted generation command; include the command and error summary.
 - The surface is a repeated low-value prop better handled by instancing/procedural kits.
 - A non-hero repeated/support surface is already scoring 2+ and the ledger explains why external generation would not improve the active screenshot.
@@ -73,7 +75,8 @@ Load these files before the matching phase starts:
 - Debug/profile checklists, when debugging or profiling: `threejs-debug-profiler/references/checklists/scene-debugging.md` or `threejs-debug-profiler/references/checklists/performance-profile.md`
 - QA/release: `threejs-qa-release/references/qa-release-checklists.md`
 - QA/release checklists, for final verification: `threejs-qa-release/references/checklists/visual-verification.md`, `threejs-qa-release/references/checklists/playtest-qa.md`, and `threejs-qa-release/references/checklists/release.md`
-- 3D generator, when loaded by the external asset sourcing gate: `threejs-3d-generator/references/api-notes.md`
+- 3D/image generator MCP path, when using the Alpha3D MCP connector: `threejs-3d-generator/references/mcp-integration.md`
+- 3D generator API-key path, when loaded by the external asset sourcing gate: `threejs-3d-generator/references/api-notes.md`
 - 3D generator, when loaded for a game: `threejs-3d-generator/references/threejs-integration.md`
 - 3D plus image generator, when both are loaded: `threejs-3d-generator/references/image-generator-workflows.md`
 - Audio generator, when loaded for a game: `threejs-audio-generator/references/audio-workflows.md`
@@ -82,54 +85,37 @@ Try paths relative to the loaded skill directory first, then `~/.claude/skills`,
 
 ## Phase Ledger Template
 
+This is the single canonical ledger for the whole system — the director `SKILL.md` points here rather than restating it. Fill it and include it in the final report. `not-needed` is the default: only spell out a row when the request actually touches it. For every `loaded: yes`, cite one short quoted phrase from the file as proof of read — a bare `yes` with no citation counts as `no`.
+
 ```text
-Director: active
-Sibling skill files loaded:
-- Gameplay systems: yes/no, path or reason:
-- AAA graphics: yes/no, path or reason:
-- UI: yes/no, path or reason:
-- Debug/profile: yes/no, path or reason:
-- QA/release: yes/no, path or reason:
-- 3D generator: yes/no/not-needed, path or reason:
-- Image generator: yes/no/not-needed, path or reason:
-- Audio generator: yes/no/not-needed, path or reason:
-External asset sourcing:
+Director: active | mode: thorough | economy
+
+Loaded (SKILL.md + its gated references; default not-needed; cite a quoted phrase per yes):
+- gameplay-systems (+ gameplay-workflows, physics-engine-selection if physics): yes/no/not-needed — path + quote:
+- aaa-graphics (+ visual-scorecard, implementation-blueprint, model-recipes, render-recipes, checklists): yes/no/not-needed — path + quote:
+- ui-designer (+ ui-patterns, UI checklists): yes/no/not-needed — path + quote:
+- debug-profiler (+ debug-profile-checklists): yes/no/not-needed — path + quote:
+- qa-release (+ qa-release-checklists): yes/no/not-needed — path + quote:
+- 3d-generator (MCP: mcp-integration / API: api-notes + threejs-integration): yes/no/not-needed — path + quote:
+- image-generator: yes/no/not-needed — path + quote:
+- audio-generator (+ audio-workflows): yes/no/not-needed — path + quote:
+
+External asset sourcing (fill only the surfaces the game has; else not-needed):
+- Path used: MCP connector | API key | n/a
 - Credential probe output:
-- Hero/player source:
-- Enemies/vehicles/weapons source:
-- Signature props/pickups source:
-- World/sky/background source:
-- Materials/textures/decals source:
-- Logos/icons/GUI art source:
-- Audio/SFX/voice source:
-- External assets generated or skip reason:
-- Audio assets generated or skip reason:
-Required references loaded:
-- Gameplay workflows: yes/no/not-needed, path or reason:
-- Physics engine selection: yes/no/not-needed, path or reason:
-- Gameplay/new-game checklists: yes/no/not-needed, path or reason:
-- Visual scorecard: yes/no/not-needed, path or reason:
-- Graphics implementation blueprint: yes/no/not-needed, path or reason:
-- Model recipes: yes/no/not-needed, path or reason:
-- Render recipes: yes/no/not-needed, path or reason:
-- Graphics checklists: yes/no/not-needed, path or reason:
-- UI patterns: yes/no/not-needed, path or reason:
-- UI checklists: yes/no/not-needed, path or reason:
-- Debug/profile checklists: yes/no/not-needed, path or reason:
-- QA/release checklists: yes/no/not-needed, path or reason:
-- 3D generator API notes: yes/no/not-needed, path or reason:
-- 3D generator Three.js integration: yes/no/not-needed, path or reason:
-- 3D/image generator workflows: yes/no/not-needed, path or reason:
-- Audio workflows: yes/no/not-needed, path or reason:
-Gameplay systems: pending/running/done/skipped - evidence:
-External asset sourcing: pending/running/done/skipped - evidence:
-AAA graphics: pending/running/done/skipped - evidence:
-UI: pending/running/done/skipped - evidence:
-Debug/profile: pending/running/done/skipped - evidence:
-QA/release: pending/running/done/skipped - evidence:
+- Per surface (player / enemies+vehicles+weapons / props+pickups / world+sky / textures+decals / logos+icons / audio):
+  source = procedural | image-generator | 3d-generator | hybrid, and evidence (job id / asset path) or skip reason
+
+Phases (pending | running | done | skipped, + evidence):
+- Gameplay systems:
+- External asset sourcing:
+- AAA graphics:
+- UI:
+- Debug/profile:
+- QA/release:
 ```
 
-Mark a phase `done` only after implementation plus verification. If a phase is skipped, state why it is out of scope or blocked.
+Mark a phase `done` only after implementation plus verification evidence; a phase with no ledger slice is `pending`. If a phase is skipped, state why it is out of scope or blocked.
 
 ## Phase 1: Discovery And Playable Contract
 
@@ -175,7 +161,8 @@ Exit evidence:
 
 Run before the premium graphics pass when trigger surfaces exist.
 
-- Run the credential probe from the director skill scripts and paste output.
+- First check whether the Alpha3D MCP tools are present in the session. If they are, 3D/image generation can proceed with no key (load `threejs-3d-generator/references/mcp-integration.md`), and a `MISSING` `ALPHA3D_API_KEY` does not block generation.
+- Run the credential probe from the director skill scripts and paste output (covers the API-key path and the ElevenLabs audio key).
 - Load `threejs-3d-generator`, `threejs-image-generator`, and/or `threejs-audio-generator` when their trigger surfaces exist.
 - Load 3D generator API notes, Three.js integration, image-generator workflow, and audio workflow references when relevant.
 - Decide source per high-value surface: procedural / threejs-image-generator / threejs-3d-generator / threejs-audio-generator / hybrid.
@@ -272,6 +259,23 @@ Exit evidence:
 - Issues fixed or listed with likely owners.
 - Residual risks.
 
+## Gate Failure Routing
+
+The phases are a loop, not a one-way checklist. When a gate fails, re-enter the phase that owns the fix, then re-run the phase(s) downstream of it. Do not paper over a failed gate to reach the end.
+
+| Failed gate / symptom | Re-enter | Then re-run |
+| --- | --- | --- |
+| Build/typecheck fails | Phase 2 (gameplay) or the phase that introduced it | 6 → 7 |
+| Blank/broken canvas, runtime/console error | Phase 6 (debug) | 7 |
+| Main control path does not change state / no fail-retry | Phase 2 (gameplay) | 6 → 7 |
+| Visual scorecard category < 2, or average < 2.3 | Phase 4 (graphics); Phase 3 first if a hero surface lacks a real asset | 4 → 5 → 7 |
+| Missing external asset evidence for a premium hero surface | Phase 3 (asset sourcing) → Phase 4 | 7 |
+| HUD/menu unreadable, overlaps play path, or fails safe areas/touch targets | Phase 5 (UI) | 7 |
+| FPS/draw-call/memory budget exceeded | Phase 6 (debug/profile) | 7 |
+| Audit reports a missing section | The phase that owns the section | audit |
+
+Loop until every gate passes or the remaining blocker is stated explicitly. A premium claim is never made with an open gate.
+
 ## Completion Gate
 
 For premium/AAA/showcase claims, all of these must be true:
@@ -287,5 +291,6 @@ For premium/AAA/showcase claims, all of these must be true:
 - Renderer diagnostics exist after graphics changes.
 - Build and browser QA passed or blockers are clearly reported.
 - Physics-heavy games include engine choice, timestep, collider strategy, sensors, CCD use, and body/collider diagnostics.
+- The report audit (`audit_reference_report.py` with flags derived from the ledger) was run and passed, or the report states why it could not run.
 
-If any gate fails, continue iterating or report the exact blocker instead of calling the game premium.
+If any gate fails, follow the Gate Failure Routing table above — re-enter the owning phase and re-run downstream phases — or report the exact blocker instead of calling the game premium.

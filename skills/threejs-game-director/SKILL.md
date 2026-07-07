@@ -69,24 +69,7 @@ ELEVENLABS_API_KEY=SET|MISSING
 
 The probe checks the current environment plus the user's zsh and bash login profiles, and prints only SET/MISSING markers, never secret values. `key unavailable` is not a valid skip reason unless this probe output is shown AND the Alpha3D MCP connector is also absent.
 
-For broad or premium game work, create an asset sourcing ledger before the graphics phase:
-
-```text
-External asset sourcing:
-- Credential probe output:
-- Hero/player:
-- Enemies/vehicles/weapons:
-- Signature props/pickups:
-- World/sky/background:
-- Materials/textures/decals:
-- Logos/icons/GUI art:
-- Chosen sources per surface: procedural / threejs-image-generator / threejs-3d-generator / hybrid
-- 3D generator loaded: yes/no, path or blocker:
-- Image generator loaded: yes/no, path or blocker:
-- Audio generator loaded: yes/no/not-needed, path or blocker:
-- External assets generated: yes/no, outputs or reason:
-- Audio assets generated: yes/no/not-needed, outputs or reason:
-```
+For broad or premium game work, fill the asset sourcing ledger before the graphics phase. The single canonical ledger template lives in `references/director-phase-os.md` — do not restate it here; fill that one and include it in the final report.
 
 Allowed reasons to skip actual external generation after loading the skills:
 
@@ -121,7 +104,8 @@ Required phase references:
 - Debug/profile checklists, when debugging or profiling: `threejs-debug-profiler/references/checklists/scene-debugging.md` or `threejs-debug-profiler/references/checklists/performance-profile.md`
 - QA/release: `threejs-qa-release/references/qa-release-checklists.md`
 - QA/release checklists, for final verification: `threejs-qa-release/references/checklists/visual-verification.md`, `threejs-qa-release/references/checklists/playtest-qa.md`, and `threejs-qa-release/references/checklists/release.md`
-- 3D generator, when loaded by the external asset sourcing gate: `threejs-3d-generator/references/api-notes.md`
+- 3D/image generator MCP path, when using the Alpha3D MCP connector: `threejs-3d-generator/references/mcp-integration.md`
+- 3D generator API-key path, when loaded by the external asset sourcing gate: `threejs-3d-generator/references/api-notes.md`
 - 3D generator, when loaded for a game: `threejs-3d-generator/references/threejs-integration.md`
 - 3D plus image generator, when both are loaded: `threejs-3d-generator/references/image-generator-workflows.md`
 - Audio generator, when loaded for a game: `threejs-audio-generator/references/audio-workflows.md`
@@ -143,60 +127,33 @@ Rules:
 - A phase cannot be marked `done` until its required references are loaded or the final answer explicitly reports the reference as unavailable and the phase as blocked/fallback.
 - For premium/AAA/showcase claims, the final response must include the filled 10-category visual scorecard from `visual-scorecard.md`, including average and automatic failures remaining.
 - For broad work, include the phase checklist outputs from each relevant reference, not just a summary that the game works.
-- Thorough mode is the default for broad, premium, AAA, showcase, complete, and release-ready requests. Economy mode is allowed only for narrow fixes that do not claim premium quality.
+- Thorough mode is the default for broad, premium, AAA, showcase, complete, and release-ready requests. Economy mode (the narrow-fix fast path) is allowed only for narrow fixes that do not claim premium quality.
 
-If Task/subagent/workflow tools are available, delegate each major phase to a focused worker with the phase `SKILL.md` plus its required references explicitly loaded. If those tools are unavailable, execute serially after the same reference files have been loaded.
+Narrow-fix fast path (economy mode): for a scoped fix — one bug, one HUD tweak, one control change — load only the single relevant specialist skill plus `threejs-qa-release`, skip the external asset sourcing phase and the visual scorecard entirely, and verify with a build + a browser smoke check of the changed path (desktop, plus mobile if the change touches layout/input). Keep a short ledger noting the fast path was used and why. Escalate to thorough mode the moment the work starts touching multiple visual surfaces or the user asks for premium/AAA/"less basic" quality.
+
+## Delegation And Phase Dependencies
+
+If Task/subagent/workflow tools are available, delegate major phases to focused workers; otherwise execute the same order serially. Each worker is spawned with its phase `SKILL.md` plus that phase's required references explicitly loaded, and returns its slice of the ledger (loaded references, evidence, blockers) for the director to merge into one report — a worker's prose is not the deliverable, its ledger slice and artifacts are.
+
+Respect these dependencies (do not parallelize across an arrow):
+
+- Gameplay systems (Phase 2) → runs first; everything depends on a working loop.
+- External asset sourcing (Phase 3) → must finish before AAA graphics can be marked done.
+- AAA graphics (Phase 4) depends on gameplay + asset sourcing.
+- UI (Phase 5) and audio generation can run **in parallel with each other** once gameplay exists; both depend only on the loop, not on graphics.
+- Debug/profile (Phase 6) and QA/release (Phase 7) are terminal — run after the build stabilizes, and re-enter earlier phases via the gate-failure routing in `references/director-phase-os.md` when a gate fails.
+
+Merge every worker's ledger slice before running the completion audit; a missing slice means that phase is `pending`, not `done`.
 
 ## Ledgers
 
-Track both skill loading and phase execution:
+The director tracks skill loading, reference loading, asset sourcing, and phase execution in **one** ledger. Its canonical template lives in `references/director-phase-os.md` ("Phase Ledger Template") — fill that single copy and include it in the final report. It is not restated here so the two files cannot drift.
 
-- Director: active
-- Sibling skills loaded:
-  - Gameplay systems: yes/no, path or reason:
-  - AAA graphics: yes/no, path or reason:
-  - UI: yes/no, path or reason:
-  - Debug/profile: yes/no, path or reason:
-  - QA/release: yes/no, path or reason:
-  - 3D generator: yes/no/not-needed, path or reason:
-  - Image generator: yes/no/not-needed, path or reason:
-  - Audio generator: yes/no/not-needed, path or reason:
-- External asset sourcing:
-  - Credential probe output:
-  - Hero/player source:
-  - Enemies/vehicles/weapons source:
-  - Signature props/pickups source:
-  - World/sky/background source:
-  - Materials/textures/decals source:
-  - Logos/icons/GUI art source:
-  - Audio/SFX/voice source:
-  - External assets generated or skip reason:
-  - Audio assets generated or skip reason:
-- Required references loaded:
-  - Gameplay workflows: yes/no/not-needed, path or reason:
-  - Physics engine selection: yes/no/not-needed, path or reason:
-  - Gameplay/new-game checklists: yes/no/not-needed, path or reason:
-  - Visual scorecard: yes/no/not-needed, path or reason:
-  - Graphics implementation blueprint: yes/no/not-needed, path or reason:
-  - Model recipes: yes/no/not-needed, path or reason:
-  - Render recipes: yes/no/not-needed, path or reason:
-  - Graphics checklists: yes/no/not-needed, path or reason:
-  - UI patterns: yes/no/not-needed, path or reason:
-  - UI checklists: yes/no/not-needed, path or reason:
-  - Debug/profile checklists: yes/no/not-needed, path or reason:
-  - QA/release checklists: yes/no/not-needed, path or reason:
-  - 3D generator API notes: yes/no/not-needed, path or reason:
-  - 3D generator Three.js integration: yes/no/not-needed, path or reason:
-  - 3D/image generator workflows: yes/no/not-needed, path or reason:
-  - Audio workflows: yes/no/not-needed, path or reason:
-- Gameplay systems: pending/running/done/skipped, evidence:
-- External asset sourcing: pending/running/done/skipped, evidence:
-- AAA graphics: pending/running/done/skipped, evidence:
-- UI: pending/running/done/skipped, evidence:
-- Debug/profile: pending/running/done/skipped, evidence:
-- QA/release: pending/running/done/skipped, evidence:
+Ledger rules:
 
-A phase is done only with implementation plus verification evidence.
+- `not-needed` is the default for any surface or reference a request does not touch; only spell out a line when a trigger surface is actually present.
+- Proof of read: do not mark a sibling skill or reference `loaded: yes` unless it was actually read into context this session. For each `yes`, cite one short quoted phrase from the file as proof — a bare `yes` with no citation counts as `no`.
+- A phase is `done` only with implementation plus verification evidence; a phase with no ledger slice is `pending`, not `done`.
 
 ## Phase Routing
 
@@ -252,13 +209,19 @@ The scorecard must use the exact categories from `threejs-aaa-graphics-builder/r
 
 ## Report Audit
 
-When shell tools are available, draft the final evidence report to a temporary markdown file and run the director audit before finalizing broad or premium work:
+Running the audit is a **required** completion step for broad or premium work, not an optional extra. Draft the final evidence report to a temporary markdown file and run the director audit before finalizing:
 
 ```bash
-python3 <director-skill-dir>/scripts/audit_reference_report.py --premium /path/to/final-report.md
+python3 <director-skill-dir>/scripts/audit_reference_report.py [flags] /path/to/final-report.md
 ```
 
-Use `--premium` for premium, AAA, showcase, high-fidelity, polished, complete, release-ready, or "less basic" claims. Add `--physics` for physics-heavy games such as pool/snooker, mini-golf, pinball, marble racers, physics puzzles, rigid-body games, or games with many sensors/colliders. Add `--audio` when generated or integrated audio is in scope, and for premium active-gameplay claims unless the user requested silent/offline-only output. If the audit fails, fix the missing report sections or state the exact blocker instead of claiming completion. If the script is unavailable, manually enforce the same required sections: skill-loading ledger, reference ledger, external asset/audio sourcing ledger, phase checklist, visual scorecard, physics/audio diagnostics when relevant, verification evidence, and remaining risks.
+Derive the flags from the phase ledger automatically — do not decide them by feel:
+
+- `--premium` — set whenever the request or claim is premium, AAA, showcase, high-fidelity, polished, complete, release-ready, or "less basic".
+- `--physics` — set whenever the phase ledger shows the physics-engine-selection reference `loaded: yes` (pool/snooker, mini-golf, pinball, marble racers, physics puzzles, rigid-body games, many sensors/colliders).
+- `--audio` — set whenever audio is in scope, and for any premium active-gameplay claim, unless the user requested silent/offline-only output.
+
+If the audit fails, fix the missing report sections or state the exact blocker — do not claim completion. Only if the script genuinely cannot run (no shell, script absent) may you fall back to manually enforcing the same sections: the one merged ledger (skill-loading, reference, asset/audio sourcing, phase execution), phase checklist outcomes, the filled visual scorecard with numeric scores + average, physics/audio diagnostics when relevant, verification evidence, and remaining risks — and say in the report that the automated audit could not run.
 
 ## Final Response
 

@@ -31,11 +31,6 @@ def scaffold_dir() -> Path:
     return skill_dir() / "assets" / "threejs-vite-game"
 
 
-def normalized_project_name(target: Path) -> str:
-    name = re.sub(r"[^a-z0-9._-]+", "-", target.resolve().name.lower()).strip("-")
-    return name or "threejs-vite-game"
-
-
 def ignore(_directory: str, names: list[str]) -> set[str]:
     ignored: set[str] = set()
     for name in names:
@@ -62,14 +57,23 @@ def create_game(target: Path, force: bool) -> None:
     if target.exists() and any(target.iterdir()) and not force:
         raise SystemExit(f"Target is not empty: {target}\nUse --force to copy into it anyway.")
 
+    merged_into_existing = target.exists() and any(target.iterdir())
     target.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source, target, dirs_exist_ok=True, ignore=ignore)
 
-    project_name = normalized_project_name(target)
+    raw_name = re.sub(r"[^a-z0-9._-]+", "-", target.resolve().name.lower()).strip("-")
+    project_name = raw_name or "threejs-vite-game"
     rewrite_json_name(target / "package.json", project_name)
     rewrite_json_name(target / "package-lock.json", project_name)
 
-    print(f"Created Three.js game scaffold at {target.resolve()}")
+    if merged_into_existing:
+        print("WARNING: --force copied the scaffold into a non-empty directory; "
+              "files already there that are not part of the scaffold were left in "
+              "place (this is a merge, not a clean replace).")
+    if not raw_name:
+        print(f"Note: directory name yielded no valid npm package name; "
+              f"fell back to '{project_name}'.")
+    print(f"Created Three.js game scaffold at {target.resolve()} (package name: {project_name})")
     print(f"Next: cd {target} && npm install && npm run dev")
 
 

@@ -17,6 +17,7 @@ This repo contains Codex workflow assets for Three.js browser-game development.
 ## Game Quality Bar
 
 - For broad requests to build, upgrade, polish, or finish a Three.js game, route through `threejs-game-director` first. The user should not have to name every specialist skill.
+- This section is a summary. The authoritative contract — skip rules, the single ledger template, phase execution, gate-failure routing, and the completion gate — lives in `skills/threejs-game-director/SKILL.md` and `skills/threejs-game-director/references/director-phase-os.md`. When in doubt, defer to those; do not maintain a competing copy of the rules here.
 - Public Three.js skills are consolidated around the director plus specialist systems: gameplay, AAA graphics, UI, debug/profile, QA/release, 3D generation, image generation, and audio generation.
 - In Claude-style skill runners, do not assume a director skill can literally invoke other skills. The director must attempt to load sibling public `SKILL.md` files first, report a skill-loading ledger, and use the bundled phase OS only for files that cannot be loaded.
 - For broad/premium director work, the director must load each phase's required `references/*.md` files at phase entry and report a reference ledger. A phase is not done if its required references were skipped.
@@ -34,7 +35,7 @@ This repo contains Codex workflow assets for Three.js browser-game development.
 - Use focused UI passes for HUDs, menus, text fit, icon controls, and safe-area layout instead of treating interface craft as generic polish.
 - Use focused procedural-model passes for scratch-built assets, prop kits, material variation, instancing, LOD, and renderer-count-aware detail.
 - For premium/AAA/showcase/high-fidelity/less-basic work with characters, vehicles, ships, weapons, buildings, signature props, skies, textures, decals, logos, icons, GUI art, SFX, ambience, or voice, load `threejs-3d-generator`, `threejs-image-generator`, and/or `threejs-audio-generator` before deciding procedural/generated assets are unnecessary.
-- Run the director credential probe before claiming 3D/image/audio generation credentials are unavailable. A missing key is not a valid blocker unless the SET/MISSING probe output is reported.
+- 3D and image generation default to Alpha3D via either the MCP connector (no key) or `ALPHA3D_API_KEY`. Run the director credential probe before claiming credentials are unavailable. A missing key is not a valid blocker unless the SET/MISSING probe output is reported AND the Alpha3D MCP connector is also absent.
 - Report an external asset sourcing ledger for premium graphics work: procedural / threejs-image-generator / threejs-3d-generator / hybrid per high-value surface, plus task IDs/output paths or real blocker evidence.
 - For premium hero surfaces, procedural-only is not a valid final answer unless credential probe output or attempted generation shows a real blocker.
 - Use `threejs-3d-generator` for high-value external AI-generated 3D assets, auto-rigging, animation, texture, conversion, and GLB/FBX game asset workflows.
