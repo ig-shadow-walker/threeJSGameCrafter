@@ -15,6 +15,10 @@ Claude-style skill runners may invoke only this skill when the user runs `/three
 
 ## Mandatory Sibling Skill Loading
 
+For from-scratch, vague, or "help me design/plan a game" requests, load this **first**, before gameplay — it produces or reads the Game Design Document that seeds the playable contract (core loop) and the asset sourcing ledger. Skip it only for narrow fixes or an existing game whose direction is already clear:
+
+- `threejs-game-concept/SKILL.md`
+
 For complete, premium, AAA, polished, high-fidelity, showcase, from-scratch, upgrade, or release-ready game work, load these sibling skill files before implementation:
 
 - `threejs-gameplay-systems/SKILL.md`
@@ -89,6 +93,7 @@ References are not optional enrichment. They are phase-entry gates. For broad ga
 
 Required phase references:
 
+- Concept/design, for from-scratch or "help me design" work: `threejs-game-concept/references/ideation-workflows.md` and `threejs-game-concept/references/gdd-template.md`
 - Gameplay systems: `threejs-gameplay-systems/references/gameplay-workflows.md`
 - Physics selection, when physics/collision-heavy gameplay is in scope: `threejs-gameplay-systems/references/physics-engine-selection.md`
 - New game completion checklist, when creating a game or first playable slice: `threejs-gameplay-systems/references/checklists/new-game-definition-of-done.md`
@@ -157,6 +162,7 @@ Ledger rules:
 
 ## Phase Routing
 
+- `threejs-game-concept`: ideation, concept, pillars, core loop, scope tiers, asset map, and the Game Design Document. Runs first for from-scratch/vague requests; its GDD feeds the playable contract and asset sourcing.
 - `threejs-gameplay-systems`: first playable slice, architecture, mechanics, entities, input, camera, controls, game feel.
 - Physics selection: engine choice, fixed timestep, collider strategy, sensors, collision proxies, CCD, diagnostics, and QA for physics-heavy games.
 - External asset sourcing: credential probe, generator skill loading, asset source decision, task IDs/output files or blocker evidence. This phase must be done before `threejs-aaa-graphics-builder` can be marked done for premium graphics work.

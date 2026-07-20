@@ -1,0 +1,4 @@
+interface:
+  display_name: "Three.js Game Concept"
+  short_description: "Ideate, scope, and write the Game Design Document for a Three.js game"
+  default_prompt: "Help me turn a game idea into a buildable Three.js browser concept. Ask only the questions that change the design, then propose a high concept, three pillars, a one-sentence core loop, mechanics, desktop and mobile controls, art and audio direction, a scope tier with a vertical slice to build first, and an asset map tagged by generator. Keep it achievable in a real-time browser, write the GDD to docs/game-design.md, and hand off to threejs-game-director."

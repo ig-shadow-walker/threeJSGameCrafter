@@ -60,6 +60,7 @@ For premium claims with hero surfaces such as player, enemy, boss, creature, veh
 
 Load these files before the matching phase starts:
 
+- Concept/design, for from-scratch or "help me design" work: `threejs-game-concept/references/ideation-workflows.md` and `threejs-game-concept/references/gdd-template.md`
 - Gameplay systems: `threejs-gameplay-systems/references/gameplay-workflows.md`
 - Physics selection, when physics/collision-heavy gameplay is in scope: `threejs-gameplay-systems/references/physics-engine-selection.md`
 - New-game checklist, when creating a game or first playable slice: `threejs-gameplay-systems/references/checklists/new-game-definition-of-done.md`
@@ -91,6 +92,7 @@ This is the single canonical ledger for the whole system — the director `SKILL
 Director: active | mode: thorough | economy
 
 Loaded (SKILL.md + its gated references; default not-needed; cite a quoted phrase per yes):
+- game-concept (+ ideation-workflows, gdd-template) — from-scratch/vague only: yes/no/not-needed — path + quote:
 - gameplay-systems (+ gameplay-workflows, physics-engine-selection if physics): yes/no/not-needed — path + quote:
 - aaa-graphics (+ visual-scorecard, implementation-blueprint, model-recipes, render-recipes, checklists): yes/no/not-needed — path + quote:
 - ui-designer (+ ui-patterns, UI checklists): yes/no/not-needed — path + quote:
@@ -107,6 +109,7 @@ External asset sourcing (fill only the surfaces the game has; else not-needed):
   source = procedural | image-generator | 3d-generator | hybrid, and evidence (job id / asset path) or skip reason
 
 Phases (pending | running | done | skipped, + evidence):
+- Concept/design (from-scratch/vague only):
 - Gameplay systems:
 - External asset sourcing:
 - AAA graphics:
@@ -116,6 +119,22 @@ Phases (pending | running | done | skipped, + evidence):
 ```
 
 Mark a phase `done` only after implementation plus verification evidence; a phase with no ledger slice is `pending`. If a phase is skipped, state why it is out of scope or blocked.
+
+## Phase 0: Concept And Design
+
+Run for from-scratch, vague, or "help me design a game" requests. Skip for narrow fixes or an existing game with a clear direction (record it as `skipped` with the reason).
+
+- Load `threejs-game-concept` and its references (`ideation-workflows.md`, `gdd-template.md`).
+- Ask only the questions that change the design, then propose; if the user is unsure, offer 2 to 3 distinct directions.
+- Produce the one-line high concept, three pillars, and the one-sentence core loop (verb, objective, pressure, reward, fail state, restart).
+- Define scope tiers with a vertical slice to build first, and an asset map tagged by source (procedural / image-generator / 3D-generator / audio-generator / hybrid).
+- Write the GDD to `docs/game-design.md`.
+
+Exit evidence:
+
+- GDD saved at `docs/game-design.md`.
+- One-sentence core loop stated (this becomes Phase 1's playable contract).
+- Scope tier chosen (vertical slice first) and asset map drafted (this pre-fills the Phase 3 sourcing ledger).
 
 ## Phase 1: Discovery And Playable Contract
 

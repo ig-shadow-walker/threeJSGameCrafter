@@ -1,6 +1,6 @@
 # Three.js Game Skills
 
-Self-contained Codex and Claude Code skills for building playable, polished Three.js browser games. Install the skills, then ask your agent to use `threejs-game-director`; the director routes gameplay, graphics, UI, asset generation, audio, debugging, and release verification without requiring users to choose every specialist skill manually.
+Self-contained Codex and Claude Code skills for building playable, polished Three.js browser games. Install the skills, then ask your agent to use `threejs-game-director`; the director routes concept/design, gameplay, graphics, UI, asset generation, audio, debugging, and release verification without requiring users to choose every specialist skill manually.
 
 The package includes the runtime materials agents need: `SKILL.md` files, references, checklists, prompt templates, helper scripts, and a Vite + TypeScript + Three.js scaffold bundled inside the relevant skill folders.
 
@@ -150,6 +150,7 @@ Notes:
 ## Best Entry Points
 
 - Use `threejs-game-director` for complete games, major upgrades, premium polish, release-ready work, or anything broad.
+- Use `threejs-game-concept` to ideate and scope a new game and write its Game Design Document — start here for a new idea, a vague request, or "help me plan the game I want to build".
 - Use `threejs-gameplay-systems` for mechanics, architecture, input, camera, physics, scoring, objectives, and game feel.
 - Use `threejs-aaa-graphics-builder` when screenshots look basic or the game needs stronger models, materials, lighting, VFX, world detail, or render polish.
 - Use `threejs-game-ui-designer` for HUDs, menus, overlays, responsive layout, safe areas, icons, touch controls, and text fit.
@@ -218,6 +219,7 @@ Premium/AAA claims should not rely on a static scene, placeholder cubes, generic
 ## Skill System
 
 - `threejs-game-director`: main entrypoint for complete game builds and orchestration.
+- `threejs-game-concept`: ideation, concept, pillars, core loop, scope tiers, asset map, and the Game Design Document (`docs/game-design.md`) — the pre-production phase.
 - `threejs-gameplay-systems`: playable loop, architecture, mechanics, entities, controls, camera, physics, and feel.
 - `threejs-aaa-graphics-builder`: visual scorecard, asset architecture, models, materials, VFX, render polish.
 - `threejs-game-ui-designer`: HUDs, menus, overlays, responsive UI, icons, safe areas, UI states.
